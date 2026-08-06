@@ -182,8 +182,22 @@ public final class PlayerLoginListener implements Listener {
 
     /**
      * Grants any title whose configured ({@code config.yml}'s {@code titles} section)
-     * username list contains this player's name (case-insensitive). Idempotent via
-     * {@link TitleService#ensureGranted} - safe to run on every single join.
+     * username list contains this player's name (case-insensitive), and also ensures
+     * they actually hold at least Senior Admin rank once granted.
+     *
+     * <p>The rank-pairing is a real bug fix, not a guess: {@link Title}'s own javadoc
+     * documents Developer/Executive/Owner as titles "worn by Senior Admins," not
+     * standalone honorifics, but this method previously only ever granted the title
+     * itself. A player config-listed as e.g. {@code titles.owner} then showed the
+     * correct {@code [Owner]} chat prefix (since {@link PrefixService} picks whichever
+     * single highest-weight title/rank a player holds, independent of the other) while
+     * every rank-gated command stayed completely invisible to them - {@code /ban} gave
+     * Brigadier's raw "Unknown or incomplete command" with no indication why, because a
+     * {@link Title} intentionally grants no permissions on its own (see its own
+     * javadoc); only a real {@link Rank} does, and this player had never actually been
+     * {@code /setrank}'d to one. Never downgrades an existing higher rank. Idempotent
+     * via {@link TitleService#ensureGranted}/the weight check below - safe to run on
+     * every single join.
      */
     private void grantConfiguredTitles(UUID uuid, String name, long now) throws SQLException {
         for (var entry : plugin.rigelConfig().configuredTitleHolders().entrySet()) {
@@ -193,6 +207,9 @@ public final class PlayerLoginListener implements Listener {
             if (configuredForThisPlayer) {
                 try {
                     titleService.ensureGranted(uuid, titleId, null, now);
+                    if (rankService.rankOf(uuid).weight() < Rank.SENIOR_ADMIN.weight()) {
+                        rankService.setRank(uuid, Rank.SENIOR_ADMIN.id());
+                    }
                 } catch (IllegalArgumentException e) {
                     plugin.getLogger()
                             .warning("config.yml titles." + titleId + " references an unknown title id - ignoring.");
