@@ -806,6 +806,22 @@ public final class RigelConfig {
         return source.getInt("webpanel.refresh-seconds", 5);
     }
 
+    /** @return whether the web panel's read-only schematics browse/download page is active. */
+    public boolean webPanelSchematicsEnabled() {
+        return source.getBoolean("webpanel.schematics.enabled", true);
+    }
+
+    /**
+     * @return {@code webpanel.schematics.directory} - explicit override for the schematics
+     *     folder the web panel lists/serves from. Empty means "auto-detect": whichever of
+     *     WorldEdit/FAWE is installed, its own {@code getDataFolder()}{@code /schematics} -
+     *     see {@code webpanel.SchematicsService}.
+     */
+    @NotNull
+    public String webPanelSchematicsDirectory() {
+        return source.getString("webpanel.schematics.directory", "");
+    }
+
     @NotNull
     public FileConfiguration raw() {
         return source;

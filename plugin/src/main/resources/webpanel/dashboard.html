@@ -248,6 +248,13 @@
     padding: 2px 6px;
   }
 
+  td a {
+    color: var(--accent-strong);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  td a:hover { text-decoration: underline; }
+
   footer {
     text-align: center;
     color: var(--muted);
@@ -329,6 +336,18 @@
     </div>
   </div>
 
+  <div class="panel" id="schematicsPanel" style="display:none;">
+    <h2>Schematics <span class="count" id="schematicsCount"></span></h2>
+    <div class="tablewrap">
+      <table id="schematicsTable">
+        <thead>
+          <tr><th>Path</th><th>Size</th><th>Modified</th><th></th></tr>
+        </thead>
+        <tbody id="schematicsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <footer>RigelMCMod webpanel &middot; read-only, no login required &middot; auto-refreshing every 5s</footer>
 </div>
 
@@ -359,6 +378,9 @@
     bansCount: document.getElementById("bansCount"),
     mutesBody: document.getElementById("mutesBody"),
     mutesCount: document.getElementById("mutesCount"),
+    schematicsPanel: document.getElementById("schematicsPanel"),
+    schematicsBody: document.getElementById("schematicsBody"),
+    schematicsCount: document.getElementById("schematicsCount"),
     refreshBtn: document.getElementById("refreshBtn")
   };
 
@@ -414,6 +436,15 @@
     if (tps >= 18) return { level: "good", label: "Healthy" };
     if (tps >= 15) return { level: "warning", label: "Degraded" };
     return { level: "critical", label: "Critical" };
+  }
+
+  function formatBytes(n) {
+    if (n == null) return "—";
+    var units = ["B", "KB", "MB", "GB"];
+    var i = 0;
+    var v = n;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return (i === 0 ? v : v.toFixed(1)) + " " + units[i];
   }
 
   function setTiles(status) {
@@ -494,6 +525,24 @@
     }).join("");
   }
 
+  function renderSchematics(list) {
+    els.schematicsPanel.style.display = "";
+    els.schematicsCount.textContent = list.length;
+    if (!list.length) {
+      els.schematicsBody.innerHTML = '<tr><td colspan="4" class="empty">No schematics found</td></tr>';
+      return;
+    }
+    els.schematicsBody.innerHTML = list.map(function (s) {
+      var href = "/api/schematics/download?path=" + encodeURIComponent(s.path);
+      return '<tr>' +
+        '<td>' + esc(s.path) + '</td>' +
+        '<td class="num">' + formatBytes(s.sizeBytes) + '</td>' +
+        '<td class="when">' + formatWhen(s.modifiedAt) + '</td>' +
+        '<td><a href="' + href + '" download>Download</a></td>' +
+        '</tr>';
+    }).join("");
+  }
+
   function getJson(path) {
     return fetch(path, { cache: "no-store" }).then(function (res) {
       if (!res.ok) throw new Error(path + " -> " + res.status);
@@ -507,7 +556,8 @@
       getJson("/api/players"),
       getJson("/api/staff"),
       getJson("/api/bans"),
-      getJson("/api/mutes")
+      getJson("/api/mutes"),
+      getJson("/api/schematics/list")
     ]).then(function (results) {
       var anyOk = false;
       if (results[0].status === "fulfilled") { setTiles(results[0].value); anyOk = true; }
@@ -515,6 +565,10 @@
       if (results[2].status === "fulfilled") { renderStaff(results[2].value); anyOk = true; }
       if (results[3].status === "fulfilled") { renderBans(results[3].value); anyOk = true; }
       if (results[4].status === "fulfilled") { renderMutes(results[4].value); anyOk = true; }
+      // Schematics browsing is a separately-toggleable feature (webpanel.schematics.enabled)
+      // - a 404 here just means it's off, not a connectivity problem, so this deliberately
+      // never contributes to anyOk/the error bar the way every other endpoint above does.
+      if (results[5].status === "fulfilled") { renderSchematics(results[5].value); }
 
       lastFetchOk = anyOk;
       els.errbar.classList.toggle("show", !anyOk);

@@ -6,12 +6,16 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.rigelmc.RigelMCMod;
 
 /**
@@ -40,13 +44,17 @@ public final class WebPanelServer {
 
     private final RigelMCMod plugin;
     private final WebPanelSnapshotService snapshotService;
+    private final SchematicsService schematicsService;
     private HttpServer server;
     private ExecutorService requestExecutor;
     private byte[] dashboardHtml = new byte[0];
 
-    public WebPanelServer(@NotNull RigelMCMod plugin, @NotNull WebPanelSnapshotService snapshotService) {
+    public WebPanelServer(
+            @NotNull RigelMCMod plugin, @NotNull WebPanelSnapshotService snapshotService,
+            @NotNull SchematicsService schematicsService) {
         this.plugin = plugin;
         this.snapshotService = snapshotService;
+        this.schematicsService = schematicsService;
     }
 
     public void start() {
@@ -73,8 +81,15 @@ public final class WebPanelServer {
         server.createContext("/api/staff", exchange -> handle(exchange, this::staffJson));
         server.createContext("/api/bans", exchange -> handle(exchange, this::bansJson));
         server.createContext("/api/mutes", exchange -> handle(exchange, this::mutesJson));
+        if (plugin.rigelConfig().webPanelSchematicsEnabled()) {
+            // Registered as its own context (not folded into /api/schematics as a query
+            // param dispatch) purely so HttpServer's own longest-prefix-match routing keeps
+            // working the same way every other endpoint here already relies on.
+            server.createContext("/api/schematics/list", exchange -> handle(exchange, this::schematicsJson));
+            server.createContext("/api/schematics/download", this::handleSchematicDownload);
+        }
         // Catch-all - HttpServer dispatches by longest matching prefix, so this only ever
-        // serves paths the five specific /api/* contexts above didn't already claim.
+        // serves paths the specific /api/* contexts above didn't already claim.
         server.createContext("/", this::handleDashboard);
 
         server.start();
@@ -222,5 +237,75 @@ public final class WebPanelServer {
                     .append('}');
         }
         return sb.append(']').toString();
+    }
+
+    private String schematicsJson() {
+        List<SchematicsService.Entry> entries = schematicsService.list();
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < entries.size(); i++) {
+            SchematicsService.Entry entry = entries.get(i);
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append('{')
+                    .append("\"path\":").append(JsonUtil.string(entry.relativePath())).append(',')
+                    .append("\"sizeBytes\":").append(JsonUtil.number(entry.sizeBytes())).append(',')
+                    .append("\"modifiedAt\":").append(JsonUtil.number(entry.lastModifiedMillis()))
+                    .append('}');
+        }
+        return sb.append(']').toString();
+    }
+
+    /**
+     * Serves one schematic file as a download - the only handler in this whole server that
+     * isn't pure JSON, and the only one that reads from disk rather than the cached {@link
+     * WebPanelSnapshot}. {@link SchematicsService#resolve} is the actual security boundary
+     * (path-traversal rejection); this method never touches the filesystem path itself,
+     * only the already-validated {@link Path} it returns.
+     */
+    private void handleSchematicDownload(HttpExchange exchange) throws IOException {
+        try {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            String requestedPath = queryParam(exchange, "path");
+            Path resolved = requestedPath == null ? null : schematicsService.resolve(requestedPath);
+            if (resolved == null) {
+                exchange.sendResponseHeaders(404, -1);
+                return;
+            }
+
+            byte[] body = Files.readAllBytes(resolved);
+            String downloadName = resolved.getFileName().toString();
+            exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+            exchange.getResponseHeaders().add("Content-Disposition",
+                    "attachment; filename=\"" + downloadName.replace("\"", "") + "\"");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        } finally {
+            exchange.close();
+        }
+    }
+
+    /** @return the URL-decoded value of query parameter {@code name}, or {@code null} if absent. */
+    @Nullable
+    private static String queryParam(HttpExchange exchange, String name) {
+        String rawQuery = exchange.getRequestURI().getRawQuery();
+        if (rawQuery == null || rawQuery.isEmpty()) {
+            return null;
+        }
+        for (String pair : rawQuery.split("&")) {
+            int eq = pair.indexOf('=');
+            String key = eq < 0 ? pair : pair.substring(0, eq);
+            if (!URLDecoder.decode(key, StandardCharsets.UTF_8).equals(name)) {
+                continue;
+            }
+            String rawValue = eq < 0 ? "" : pair.substring(eq + 1);
+            return URLDecoder.decode(rawValue, StandardCharsets.UTF_8);
+        }
+        return null;
     }
 }

@@ -658,6 +658,15 @@ webpanel:
   # bans, current mutes) is rebuilt. The API always serves this cached snapshot, never a
   # live query per-request.
   refresh-seconds: 5
+  # Read-only browse/download page for WorldEdit/FAWE schematic files - no upload endpoint
+  # exists at all, by design. Same no-auth/localhost-by-default security posture as the
+  # rest of this panel - see the comment above.
+  schematics:
+    enabled: true
+    # Empty = auto-detect: whichever of WorldEdit/FAWE is installed, its own plugin data
+    # folder + "/schematics". Set explicitly if your server's schematics live somewhere
+    # else (e.g. FAWE per-player-folder configs vary by install).
+    directory: ""
 
 world:
   flatlands:

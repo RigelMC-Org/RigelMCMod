@@ -410,7 +410,8 @@ public final class RigelMCMod extends JavaPlugin {
         built.add(new SkinModule());
         built.add(new InvestigateModule(permissionGate, new SpyService(), playerDao, ipHistoryDao, ipHasher, dbExecutor));
         built.add(new WebPanelModule(
-                playerDao, new BanDao(dataSource), new MuteDao(dataSource), permissionGate, dbExecutor));
+                playerDao, new BanDao(dataSource), new MuteDao(dataSource), permissionGate, titleService,
+                dbExecutor));
         built.add(new EntityCleanupModule(permissionGate));
         built.add(new LockdownModule(rankService));
         built.add(new TickFreezeModule(permissionGate));

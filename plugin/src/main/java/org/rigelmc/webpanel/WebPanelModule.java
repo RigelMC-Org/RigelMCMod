@@ -10,6 +10,7 @@ import org.rigelmc.data.dao.PlayerDao;
 import org.rigelmc.punish.ban.BanDao;
 import org.rigelmc.punish.mute.MuteDao;
 import org.rigelmc.rank.PermissionGate;
+import org.rigelmc.rank.TitleService;
 
 /**
  * The read-only web dashboard - off by default ({@code modules.webpanel.enabled: false},
@@ -23,6 +24,7 @@ public final class WebPanelModule implements PluginModule {
     private final BanDao banDao;
     private final MuteDao muteDao;
     private final PermissionGate permissionGate;
+    private final TitleService titleService;
     private final ExecutorService dbExecutor;
     private WebPanelServer server;
 
@@ -31,11 +33,13 @@ public final class WebPanelModule implements PluginModule {
             @NotNull BanDao banDao,
             @NotNull MuteDao muteDao,
             @NotNull PermissionGate permissionGate,
+            @NotNull TitleService titleService,
             @NotNull ExecutorService dbExecutor) {
         this.playerDao = playerDao;
         this.banDao = banDao;
         this.muteDao = muteDao;
         this.permissionGate = permissionGate;
+        this.titleService = titleService;
         this.dbExecutor = dbExecutor;
     }
 
@@ -52,8 +56,8 @@ public final class WebPanelModule implements PluginModule {
     @Override
     public void registerListeners(RigelMCMod plugin) {
         WebPanelSnapshotService snapshotService =
-                new WebPanelSnapshotService(plugin, playerDao, banDao, muteDao, permissionGate, dbExecutor);
-        server = new WebPanelServer(plugin, snapshotService);
+                new WebPanelSnapshotService(plugin, playerDao, banDao, muteDao, permissionGate, titleService, dbExecutor);
+        server = new WebPanelServer(plugin, snapshotService, SchematicsService.forServer(plugin));
         server.start();
 
         long refreshTicks = Math.max(1, plugin.rigelConfig().webPanelRefreshSeconds()) * 20L;

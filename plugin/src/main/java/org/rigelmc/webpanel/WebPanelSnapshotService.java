@@ -2,13 +2,17 @@ package org.rigelmc.webpanel;
 
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.logging.Level;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.rigelmc.RigelMCMod;
 import org.rigelmc.data.dao.PlayerDao;
 import org.rigelmc.data.dao.PlayerRecord;
@@ -17,6 +21,8 @@ import org.rigelmc.punish.ban.BanDao;
 import org.rigelmc.punish.mute.MuteDao;
 import org.rigelmc.rank.PermissionGate;
 import org.rigelmc.rank.Rank;
+import org.rigelmc.rank.Title;
+import org.rigelmc.rank.TitleService;
 
 /**
  * Periodically rebuilds the immutable {@link WebPanelSnapshot} the HTTP server's request
@@ -34,6 +40,7 @@ public final class WebPanelSnapshotService {
     private final BanDao banDao;
     private final MuteDao muteDao;
     private final PermissionGate permissionGate;
+    private final TitleService titleService;
     private final ExecutorService dbExecutor;
     private final long startedAt = System.currentTimeMillis();
     private volatile WebPanelSnapshot snapshot = WebPanelSnapshot.empty();
@@ -44,12 +51,14 @@ public final class WebPanelSnapshotService {
             @NotNull BanDao banDao,
             @NotNull MuteDao muteDao,
             @NotNull PermissionGate permissionGate,
+            @NotNull TitleService titleService,
             @NotNull ExecutorService dbExecutor) {
         this.plugin = plugin;
         this.playerDao = playerDao;
         this.banDao = banDao;
         this.muteDao = muteDao;
         this.permissionGate = permissionGate;
+        this.titleService = titleService;
         this.dbExecutor = dbExecutor;
     }
 
@@ -66,25 +75,70 @@ public final class WebPanelSnapshotService {
                 List<Ban> recentBans = banDao.findRecent(20);
                 List<MuteDao.MuteRecord> mutes = muteDao.findAll();
 
-                Bukkit.getScheduler().runTask(plugin, () -> applyRefresh(ranked, recentBans, mutes));
+                // Title lookups happen here (off the main thread, JDBC-backed) rather than
+                // in applyRefresh - titles are only ever meaningfully held by a ranked
+                // player (see rank.Title's own "worn by Senior Admins" javadoc), so keying
+                // this off the same `ranked` list already covers every online player too
+                // without a second main-thread hop just to enumerate live UUIDs first.
+                Map<UUID, String> titleLabels = new HashMap<>();
+                for (PlayerRecord record : ranked) {
+                    String label = resolveTitleLabel(record.uuid());
+                    if (label != null) {
+                        titleLabels.put(record.uuid(), label);
+                    }
+                }
+
+                Bukkit.getScheduler().runTask(plugin, () -> applyRefresh(ranked, recentBans, mutes, titleLabels));
             } catch (SQLException e) {
                 plugin.getLogger().log(Level.WARNING, "Failed to refresh web panel snapshot", e);
             }
         });
     }
 
-    private void applyRefresh(List<PlayerRecord> ranked, List<Ban> recentBans, List<MuteDao.MuteRecord> mutes) {
+    /**
+     * @return the display name of the highest-{@link Title#weight}-holding title this
+     *     player currently holds, or {@code null} if they hold none (caller falls back to
+     *     the rank's own display name). Simplified relative to {@code
+     *     rank.PrefixService#refresh}'s fully general version (which also compares against
+     *     the player's actual resolved {@link Rank} weight) - every built-in title's
+     *     weight (40+) already exceeds every built-in rank's weight (30 max), so for this
+     *     project's real rank ladder "holds any title" and "title outranks their rank"
+     *     are the same condition in practice. A custom rank configured above weight 40
+     *     would need the fuller comparison; flagged here rather than silently assumed.
+     */
+    @Nullable
+    private String resolveTitleLabel(UUID uuid) throws SQLException {
+        Set<String> titleIds = titleService.titleIdsFor(uuid);
+        if (titleIds.isEmpty()) {
+            return null;
+        }
+        String bestId = null;
+        int bestWeight = Integer.MIN_VALUE;
+        for (String titleId : titleIds) {
+            int weight = Title.weight(titleId);
+            if (weight > bestWeight) {
+                bestWeight = weight;
+                bestId = titleId;
+            }
+        }
+        return titleService.title(bestId).map(Title::displayName).orElse(null);
+    }
+
+    private void applyRefresh(
+            List<PlayerRecord> ranked, List<Ban> recentBans, List<MuteDao.MuteRecord> mutes,
+            Map<UUID, String> titleLabels) {
         List<WebPanelSnapshot.PlayerEntry> online = new ArrayList<>();
         for (Player player : Bukkit.getOnlinePlayers()) {
-            online.add(new WebPanelSnapshot.PlayerEntry(
-                    player.getName(), player.getUniqueId().toString(), approximateRankId(player.getUniqueId())));
+            UUID uuid = player.getUniqueId();
+            String label = titleLabels.getOrDefault(uuid, approximateRankId(uuid));
+            online.add(new WebPanelSnapshot.PlayerEntry(player.getName(), uuid.toString(), label));
         }
 
         List<WebPanelSnapshot.StaffEntry> staff = new ArrayList<>();
         for (PlayerRecord record : ranked) {
+            String label = titleLabels.getOrDefault(record.uuid(), record.rankId());
             staff.add(new WebPanelSnapshot.StaffEntry(
-                    record.lastKnownName(), record.uuid().toString(), record.rankId(),
-                    Bukkit.getPlayer(record.uuid()) != null));
+                    record.lastKnownName(), record.uuid().toString(), label, Bukkit.getPlayer(record.uuid()) != null));
         }
 
         List<WebPanelSnapshot.BanEntry> bans = new ArrayList<>();
