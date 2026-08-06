@@ -37,10 +37,48 @@ import org.jetbrains.annotations.NotNull;
  * {@link YamlConfiguration} limitation - it round-trips values only), but nothing is lost
  * that the operator didn't already have, and nothing they set is reformatted or reordered
  * beyond the newly appended keys.</p>
+ *
+ * <p><b>Stale-default warnings</b> ({@link #DEFAULT_CHANGES}, {@link #warnAboutStaleDefaults}):
+ * a real, user-reported gap in the additive-only guarantee above - it protects a value the
+ * operator <em>deliberately</em> set, but can't tell that apart from a value that's simply
+ * present because an earlier version wrote today's default into their file, which a later
+ * version then changed. That key is "missing" from neither file's perspective, so the loop
+ * above never touches it - it silently keeps using whatever was true when the operator's
+ * install first started, forever, with no signal that anything changed underneath them.
+ * (Confirmed in practice: {@code world.flatlands.wipe-requires-restart} was written as
+ * {@code true} by one release, the default flipped to {@code false} in the next one for a
+ * concrete, user-reported reason, and the operator's live file kept silently using the old
+ * value with no indication why the new behavior never took effect.) Rather than silently
+ * mutating a value that might be a deliberate, informed choice - which would violate the
+ * additive-only guarantee in spirit even if not in the missing-key sense - this only
+ * <em>warns</em>, every time {@link #update} runs (boot and every {@code /rmcm reload}),
+ * for as long as the live value still exactly matches the recorded old default. The moment
+ * an operator sets it to anything else - the new default, the old one restated on purpose,
+ * or something else entirely - the warning stops on its own, no extra state to track.</p>
  */
 public final class ConfigUpdater {
 
+    /**
+     * One entry per config.yml key whose bundled/Java-side default has changed between
+     * releases - append to this, never remove or edit past entries, when a future default
+     * change needs the same treatment. See this class's own javadoc for why this exists.
+     */
+    private static final List<DefaultChange> DEFAULT_CHANGES = List.of(
+            new DefaultChange(
+                    "world.flatlands.wipe-requires-restart", true, false,
+                    "Most container/panel setups (Pterodactyl confirmed) only auto-restart the server"
+                            + " process on an unexpected exit (a crash), not a graceful /wipeflatlands"
+                            + " shutdown - so the old default could silently never complete a wipe on those"
+                            + " setups, with no error at all. Set this to false explicitly (the new default,"
+                            + " already covers you) for the automatic in-place wipe, or leave it true only if"
+                            + " you've confirmed your own setup restarts after a clean stop and you actually"
+                            + " want the shutdown-based flow."));
+
     private ConfigUpdater() {}
+
+    /** One config.yml key whose recorded old default no longer matches the current one. */
+    private record DefaultChange(@NotNull String path, @NotNull Object oldDefault, @NotNull Object newDefault,
+            @NotNull String reason) {}
 
     /**
      * @param liveFile the on-disk {@code config.yml} to check/update in place
@@ -89,6 +127,12 @@ public final class ConfigUpdater {
             }
         }
 
+        // Independent of the missing-key handling above/below - runs every call (boot and
+        // every /rmcm reload), regardless of whether any keys were added, and never writes
+        // anything back. See this class's own javadoc for why this only warns rather than
+        // migrating the value itself.
+        warnAboutStaleDefaults(live, logger);
+
         if (added.isEmpty()) {
             return false;
         }
@@ -107,5 +151,19 @@ public final class ConfigUpdater {
         logger.info("config.yml updated - added " + added.size() + " new key(s) introduced by a plugin update: "
                 + String.join(", ", added));
         return true;
+    }
+
+    /** See this class's own javadoc for what this checks and why it never writes anything. */
+    private static void warnAboutStaleDefaults(@NotNull YamlConfiguration live, @NotNull Logger logger) {
+        for (DefaultChange change : DEFAULT_CHANGES) {
+            if (!live.isSet(change.path()) || !change.oldDefault().equals(live.get(change.path()))) {
+                continue;
+            }
+            logger.warning("config.yml's '" + change.path() + "' is set to " + change.oldDefault()
+                    + ", which was RigelMCMod's own default before a newer version changed it to "
+                    + change.newDefault() + ". " + change.reason() + " This is NOT changed for you automatically"
+                    + " - set it explicitly to whichever value you actually want, then /rmcm reload (or restart),"
+                    + " and this warning will stop.");
+        }
     }
 }

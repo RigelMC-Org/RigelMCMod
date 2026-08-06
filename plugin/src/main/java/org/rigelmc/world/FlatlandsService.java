@@ -211,12 +211,45 @@ public final class FlatlandsService {
                 player.sendMessage(Component.text(
                         "The flatlands world is being wiped - you've been moved to spawn.", NamedTextColor.YELLOW));
             }
-            Bukkit.unloadWorld(world, false);
+            // The return value matters and used to be discarded here - a real,
+            // user-reported bug: if unloadWorld ever fails (returns false - e.g. a player
+            // whose teleport above hasn't fully landed yet, or any other reason Bukkit
+            // declines), createWorld() below silently hands back the SAME still-loaded
+            // World object untouched rather than regenerating anything - that's
+            // WorldCreator#createWorld()'s own documented behavior for an already-loaded
+            // world, not a bug in this class - which looks exactly like "the wipe did
+            // nothing" (old builds still standing) with no error anywhere. Abort instead
+            // of deleting files out from under a world Bukkit still considers loaded.
+            if (!Bukkit.unloadWorld(world, false)) {
+                wipeInProgress = false;
+                plugin.getLogger().warning("Could not wipe the flatlands world '" + name + "' - Bukkit refused to"
+                        + " unload it (most likely it still reports a player in it). Aborting rather than"
+                        + " deleting its files while still loaded. Try /wipeflatlands again in a moment.");
+                Bukkit.broadcast(Component.text(
+                        "Could not wipe the flatlands world right now - it's still in use. Try again in a moment.",
+                        NamedTextColor.RED));
+                return;
+            }
         }
 
         dbExecutor.submit(() -> {
             deleteWorldFolderRecursively(new File(Bukkit.getWorldContainer(), name));
             Bukkit.getScheduler().runTask(plugin, () -> {
+                if (Bukkit.getWorld(name) != null) {
+                    // Belt-and-suspenders against the same class of silent no-op as above:
+                    // if anything re-registered a world under this name between the unload
+                    // and here, createWorld() would again just hand back that existing
+                    // world untouched instead of regenerating - fail loudly instead of
+                    // silently returning stale data.
+                    wipeInProgress = false;
+                    plugin.getLogger().severe("Flatlands wipe failed - a world named '" + name + "' is loaded"
+                            + " again before recreation could run. Nothing was regenerated, to avoid silently"
+                            + " leaving the old world in place while claiming success.");
+                    Bukkit.broadcast(Component.text(
+                            "The flatlands wipe failed unexpectedly - check the server console.",
+                            NamedTextColor.RED));
+                    return;
+                }
                 createWorld(name);
                 // The world was just recreated fresh under the same name - any warp still
                 // pointing into it is now pointing at terrain that no longer exists. See
