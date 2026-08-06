@@ -23,6 +23,12 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # Windows checkouts don't carry the Unix executable bit, so a commit made from
+      # Windows can silently drop gradlew back to non-executable - this makes CI
+      # resilient to that regardless of what the index says.
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
       - name: Build and check
         run: ./gradlew check build --stacktrace
 
