@@ -567,6 +567,12 @@ protect:
       auto-interval-minutes: 0
 
 fun:
+  disguise:
+    # Disguise types (LibsDisguises DisguiseType / Bukkit EntityType names, case-
+    # insensitive) no player may disguise as - enforced by disguise.DisguiseAbuseGuard.
+    # Empty means "use TFM's own real default list" (see disguise.DisallowedDisguises),
+    # not "nothing forbidden" - list explicitly here to actually change it.
+    forbidden-types: []
   orbit:
     # Upward velocity re-applied while /orbit is toggled on - matches TFM's own
     # hardcoded Command_orbit strength (10.0).

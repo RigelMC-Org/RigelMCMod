@@ -545,6 +545,17 @@ public final class RigelConfig {
         return source.getInt("protect.worldedit.limits.max-containers", 500);
     }
 
+    /**
+     * @return {@code fun.disguise.forbidden-types} - disguise types (LibsDisguises {@code
+     *     DisguiseType}/Bukkit {@code EntityType} names) no player may disguise as,
+     *     enforced by {@code disguise.DisguiseAbuseGuard} - empty means "use TFM's own real
+     *     default list" (see {@code disguise.DisallowedDisguises}), not "nothing forbidden".
+     */
+    @NotNull
+    public java.util.List<String> disguiseForbiddenTypes() {
+        return source.getStringList("fun.disguise.forbidden-types");
+    }
+
     /** @return {@code investigate.radar.default-radius} - {@code /radar}'s radius when none is given. */
     public int radarDefaultRadius() {
         return source.getInt("investigate.radar.default-radius", 100);

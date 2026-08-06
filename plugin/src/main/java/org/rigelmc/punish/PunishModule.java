@@ -386,7 +386,11 @@ public final class PunishModule implements PluginModule {
                 .then(Commands.argument("player", StringArgumentType.word()).suggests(PlayerSuggestions.ONLINE_PLAYERS)
                         .executes(ctx -> executeTogglePlayerFreeze(ctx))
                         .then(Commands.literal("on").executes(ctx -> executeSetPlayerFreeze(ctx, true)))
-                        .then(Commands.literal("off").executes(ctx -> executeSetPlayerFreeze(ctx, false))))
+                        .then(Commands.literal("off").executes(ctx -> executeSetPlayerFreeze(ctx, false)))
+                        .then(Commands.literal("hard")
+                                .executes(this::executeToggleHardFreeze)
+                                .then(Commands.literal("on").executes(ctx -> executeSetHardFreeze(ctx, true)))
+                                .then(Commands.literal("off").executes(ctx -> executeSetHardFreeze(ctx, false)))))
                 .build();
     }
 
@@ -453,6 +457,42 @@ public final class PunishModule implements PluginModule {
         target.sendMessage(plugin.messages().get(
                 value ? "freeze.individual-target-on" : "freeze.individual-target-off",
                 value ? "<aqua>You have been frozen." : "<aqua>You have been unfrozen."));
+        return 1;
+    }
+
+    private int executeToggleHardFreeze(CommandContext<CommandSourceStack> ctx) {
+        Player target = onlineTargetOrFail(ctx, "player");
+        if (target == null) {
+            return 0;
+        }
+        return executeSetHardFreezeFor(ctx, target, !freezeService.isHardFrozen(target.getUniqueId()));
+    }
+
+    private int executeSetHardFreeze(CommandContext<CommandSourceStack> ctx, boolean value) {
+        Player target = onlineTargetOrFail(ctx, "player");
+        return target == null ? 0 : executeSetHardFreezeFor(ctx, target, value);
+    }
+
+    /**
+     * TFM's real {@code /lockup} replacement (see {@code punish.freeze.FreezeService}'s own
+     * javadoc for why it isn't a straight port) - a modifier on top of an ordinary freeze,
+     * not a separate command. Freezes the target first if they aren't already, so "hard-lock
+     * a griefer" is one command rather than two.
+     */
+    private int executeSetHardFreezeFor(CommandContext<CommandSourceStack> ctx, Player target, boolean value) {
+        CommandSender sender = ctx.getSource().getSender();
+        UUID actor = actorUuid(sender);
+        if (value && !freezeService.isFrozen(target.getUniqueId())) {
+            freezeService.freeze(target, actor);
+        }
+        freezeService.setHardFrozen(target.getUniqueId(), value);
+        broadcastPublic("freeze.hard", "<red>{sender} {action} hard-freeze on {target}.",
+                "sender", sender.getName(), "action", value ? "enabled" : "disabled", "target", target.getName());
+        target.sendMessage(plugin.messages().get(
+                value ? "freeze.hard-target-on" : "freeze.hard-target-off",
+                value
+                        ? "<aqua>You have been frozen and cannot chat, use commands, or interact."
+                        : "<aqua>Hard-freeze lifted."));
         return 1;
     }
 

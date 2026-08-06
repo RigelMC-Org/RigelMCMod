@@ -40,6 +40,8 @@ import org.rigelmc.discord.DiscordBotManager;
 import org.rigelmc.discord.DiscordLinkDao;
 import org.rigelmc.discord.DiscordLinkService;
 import org.rigelmc.discord.DiscordModule;
+import org.rigelmc.disguise.DisallowedDisguises;
+import org.rigelmc.disguise.DisguiseModule;
 import org.rigelmc.fun.FunModule;
 import org.rigelmc.fun.SpawnMobModule;
 import org.rigelmc.identity.IdentityService;
@@ -49,6 +51,7 @@ import org.rigelmc.myadmin.LoginMessageDao;
 import org.rigelmc.myadmin.MyAdminModule;
 import org.rigelmc.scoreboard.ScoreboardModule;
 import org.rigelmc.scoreboard.ScoreboardService;
+import org.rigelmc.skin.SkinModule;
 import org.rigelmc.nick.NickDao;
 import org.rigelmc.nick.NickModule;
 import org.rigelmc.nick.NickService;
@@ -351,6 +354,7 @@ public final class RigelMCMod extends JavaPlugin {
         LoginMessageDao loginMessageDao = new LoginMessageDao(dataSource);
         ProtectAreaService protectAreaService = new ProtectAreaService(
                 new AreaDao(dataSource), new AreaMemberDao(dataSource), new AreaFlagDao(dataSource), permissionGate);
+        DisallowedDisguises disallowedDisguises = new DisallowedDisguises(rigelConfig());
 
         getServer()
                 .getServicesManager()
@@ -402,6 +406,8 @@ public final class RigelMCMod extends JavaPlugin {
         built.add(new CrashProtectModule(permissionGate));
         built.add(new WorldEditProtectModule(permissionGate, strikeService, protectAreaService));
         built.add(new ProtectAreaModule(permissionGate, protectAreaService, auditLogService, dbExecutor));
+        built.add(new DisguiseModule(permissionGate, auditLogService, dbExecutor, disallowedDisguises));
+        built.add(new SkinModule());
         built.add(new InvestigateModule(permissionGate, new SpyService(), playerDao, ipHistoryDao, ipHasher, dbExecutor));
         built.add(new WebPanelModule(
                 playerDao, new BanDao(dataSource), new MuteDao(dataSource), permissionGate, dbExecutor));

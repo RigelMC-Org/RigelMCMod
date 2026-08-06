@@ -1,6 +1,7 @@
 package org.rigelmc.punish.freeze;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.bukkit.Bukkit;
@@ -29,12 +30,22 @@ import org.rigelmc.api.event.RigelFreezeEvent;
  * <p>Pure Java, no Bukkit event handling here - {@link FreezeListener} is what actually
  * pins a frozen player in place on {@code PlayerMoveEvent}, matching TFM's own separation
  * (its {@code Freezer} service versus {@code FreezeData} per-player state).</p>
+ *
+ * <p><b>Hard freeze</b> ({@link #isHardFrozen}) - an opt-in per-player modifier on top of an
+ * ordinary individual freeze that also blocks commands/chat/interaction (see {@link
+ * FreezeListener}). This is what actually replaces TFM's real {@code /lockup} in this
+ * project: {@code /lockup} carries TFM's own doc comment ("This is evil, and I never should
+ * have wrote it") because it hijacks a player's input at the packet level. The one
+ * legitimate value in that - a frozen griefer can't act at all during a punishment pause -
+ * is delivered here through ordinary cancellable Bukkit events instead, which is all this
+ * project needs and none of what made TFM's own author regret building it.</p>
  */
 public final class FreezeService {
 
     private final RigelMCMod plugin;
     private final Map<UUID, Location> frozenLocations = new ConcurrentHashMap<>();
     private final Map<UUID, BukkitTask> autoUnfreezeTasks = new ConcurrentHashMap<>();
+    private final Set<UUID> hardFrozen = ConcurrentHashMap.newKeySet();
     private volatile boolean globalFreeze = false;
 
     public FreezeService(@NotNull RigelMCMod plugin) {
@@ -47,6 +58,24 @@ public final class FreezeService {
 
     public boolean isFrozen(@NotNull UUID uuid) {
         return globalFreeze || frozenLocations.containsKey(uuid);
+    }
+
+    /** @return whether {@code uuid} is both frozen AND has the hard-freeze command/chat/interact block active. */
+    public boolean isHardFrozen(@NotNull UUID uuid) {
+        return hardFrozen.contains(uuid);
+    }
+
+    /**
+     * Sets or clears the hard-freeze modifier - a no-op unless {@code uuid} is already
+     * individually frozen (callers needing "freeze AND hard-lock in one step" should call
+     * {@link #freeze} first, then this - see {@code PunishModule#executeSetHardFreeze}).
+     */
+    public void setHardFrozen(@NotNull UUID uuid, boolean hard) {
+        if (hard && frozenLocations.containsKey(uuid)) {
+            hardFrozen.add(uuid);
+        } else {
+            hardFrozen.remove(uuid);
+        }
     }
 
     /** @return the location a frozen player should be snapped back to, or {@code null} if unset yet */
@@ -84,6 +113,7 @@ public final class FreezeService {
     public void unfreeze(@NotNull Player player, @Nullable UUID actorUuid) {
         UUID uuid = player.getUniqueId();
         frozenLocations.remove(uuid);
+        hardFrozen.remove(uuid);
         cancelAutoUnfreeze(uuid);
         if (player.getGameMode() != GameMode.CREATIVE) {
             player.setFlying(false);
@@ -104,6 +134,7 @@ public final class FreezeService {
 
     public void clearOnQuit(@NotNull UUID uuid) {
         frozenLocations.remove(uuid);
+        hardFrozen.remove(uuid);
         cancelAutoUnfreeze(uuid);
     }
 

@@ -187,9 +187,9 @@ Base package `org.rigelmc`.
 - `worldedit/` — `WorldEditBridge` interface with three implementations selected at enable time: `FaweEditSession` (preferred, if FastAsyncWorldEdit present), `VanillaWeEditSession` (if only WorldEdit present), `NaiveTickBudgetedSetter` (built-in fallback if neither present) — one abstraction, three backends, always functional, and it directly reinforces "better optimized" since bulk block ops (cage restore, cleanroom fill, world reset clear) get FAWE's async performance for free when it's installed
 - `rollback/` — **`CoreProtectBridge`**, a thin wrapper calling CoreProtect's public rollback/restore/lookup API (`/punish rollback player <name> time <t> radius <r>` etc. maps directly onto CoreProtect's API parameters). CoreProtect is treated as a strongly-recommended companion plugin, not reimplemented — if absent, `/punish rollback` explains it's required rather than the plugin maintaining a second, redundant change-journal. This is a deliberate scope reduction versus a from-scratch rollback log. Also backs the automatic rollback triggered by `/ban` and the opt-in `-r` flag on `/tban` (see Ban system section).
 - `webpanel/` — opt-in, off-by-default, token-authenticated, localhost-bound-by-default read-only HTTP dashboard (stats/bans/permban cases). See Ban system section for the full security rationale.
-- `disguise/` — `DisguiseBridge` wrapping LibsDisguises' `DisguiseAPI` (player/mob disguises), soft-dependency, module disabled with a clear log message if LibsDisguises isn't installed (no built-in fallback attempted — disguising correctly across all entity types is exactly LibsDisguises' specialty)
-- `skin/` — `/skin <playername|url|reset>`. Prefers **SkinsRestorer's public API** if present (defers to its skin storage/caching/application, avoiding two systems fighting over the player's skin), falling back to a lightweight built-in implementation using Paper's `PlayerProfile` texture-property API + Mojang session-server lookups if SkinsRestorer isn't installed
-- `fun/` — jump pads, landmines, novelty guns, particle trails — each its own independently-toggleable `PluginModule`, with an anti-nuke exemption path for their own effects
+- `disguise/` — `LibsDisguisesBridge` (reflection-based, wraps `DisguiseAPI`), `DisallowedDisguises` (forbidden-type list + global toggle — fixes a real dead-code bug found in TFM's own equivalent, see "Fun, disguises, and skins" section), `DisguiseAbuseGuard` (the actual enforcement), `DisguiseModule` (`/disguisetoggle`, `/undisguiseall`). Real `/disguise` stays LibsDisguises' own command, never reimplemented.
+- `skin/` — `SkinBridge`, pure presence detection only (no built-in fallback, no gating) — genuinely new ground, not a TFM port; see "Fun, disguises, and skins" section for why. `/skin` stays entirely SkinsRestorer's own command.
+- `fun/` — `OrbitService` (`/orbit`, built) plus jump pads, landmines, novelty guns, particle trails, and novelty/troll commands (`/cake`, `/cookie`, `/hack`, `/doom`, `/fuckoff`) as a tracked follow-up batch (Sub-phase F2) — each its own independently-toggleable feature within `FunModule`
 - `identity/` — `PlayerIdentity` (JAVA/BEDROCK/OFFLINE), `IdentityService` (Floodgate-API-backed detection with online-mode-based fallback), consumed by `punish/ban`, `skin/`, and `protect/MovementValidator`
 - `playerdata/`, `chat/` (mute/colorme/staff channel/command-spy), `gate/` (login gate — trusts proxy/Floodgate auth, only applies RigelMCMod-specific gating), `flags/` (generic runtime KV toggles), `announce/`, `backup/`
 - `data/` — `DataSourceFactory` (Hikari + SQLite/MySQL switch), `MigrationRunner`, `dao/*` (all async, `CompletableFuture`-returning, never touching Bukkit API off the main thread)
@@ -310,6 +310,50 @@ signature used (`javap` against the actual resolved jars, cross-referenced again
 real, same-pinned-version source) — but the actual runtime behavior of the extent chain
 needs manual confirmation on a real server.
 
+## Fun, disguises, and skins (Sub-phase F)
+
+Split into two batches, same risk-tiering rationale as `/protectarea`'s Phase A/B/C split:
+**F1** (disguises, skin bridge, freeze hardening) landed first as the smaller, lower-risk
+half; **F2** (core gadgets - landmine/mp44/trail/jumppads/held-item wands - plus novelty
+commands) is a separate follow-up pass, tracked in `fun.FunModule`'s own javadoc.
+
+**`disguise/`** - LibsDisguises integration, studied directly from TFM's real {@code
+bridge.LibsDisguisesBridge}/{@code disguise.DisallowedDisguises}. A real bug found and
+fixed, not replicated: TFM defines a forbidden-disguise-type list and even exposes a public
+`isDisguiseAllowed(String)` check for it, but a full grep of TFM's own codebase turns up
+zero callers of that method anywhere - the config option does nothing, and any player can
+disguise as any type LibsDisguises supports, including ones TFM's own default list claims to
+block. `DisguiseAbuseGuard` (a `PlayerCommandPreprocessEvent` listener, same command-owner
+`CommandMap` resolution and "verified, string-based, lower-risk first" scoping as
+`protect.worldedit.WorldEditAbuseGuard`) is what actually wires the check up. `/disguisetoggle`
+and `/undisguiseall` are ported directly from TFM's real commands, Senior Admin+
+(RigelMCMod's own top rank, matching TFM's Super Admin+ floor). Real `/disguise` stays
+entirely LibsDisguises' own command - never reimplemented, only gated and globally toggled.
+`disguise.LibsDisguisesBridge` is reflection-based (LibsDisguises isn't published anywhere
+this project could `compileOnly` against), same soft-integration shape as
+`rollback.CoreProtectBridge`; simplified relative to TFM's own delayed-retry detection since
+`paper-plugin.yml` declares `LibsDisguises: load: BEFORE`, guaranteeing a single
+constructor-time detect is enough.
+
+**`skin/`** - genuinely new ground, not a TFM port: a full grep of TFM's real source finds
+zero skin-related code at all. `skin.SkinBridge` is a pure presence-detection bridge (same
+injectable-predicate shape as `worldedit.WorldEditBridge`) with no policy attached by
+default - `/skin` stays entirely SkinsRestorer's own command, unrestricted. Exists purely as
+a hook point for a future policy layer (e.g. gating skin changes inside a `protect.area`
+region) that doesn't exist yet. `skin.SkinModule` is a thin `PluginModule` shell so
+`modules.skin.enabled: false` can suppress even the presence-detection log line.
+
+**`punish.freeze` hard-freeze** - this project's actual replacement for TFM's real
+`/lockup`, which carries TFM's own doc comment ("This is evil, and I never should have wrote
+it") for hijacking a player's input at the packet level. `/lockup` itself was deliberately
+**not** ported. Its one legitimate value - a frozen griefer can't act at all during a
+punishment pause - is instead delivered as an opt-in modifier on an ordinary individual
+freeze (`/freeze <player> hard [on|off]`, `FreezeService#isHardFrozen`): `FreezeListener`
+cancels `PlayerCommandPreprocessEvent`/`AsyncChatEvent`/`PlayerInteractEvent`/
+`PlayerInteractEntityEvent` outright for a hard-frozen, non-staff player, using the same
+ordinary cancellable-Bukkit-event mechanism this codebase already uses everywhere else -
+not packet-level suppression.
+
 ## Cross-cutting services
 
 - **Anti-nuke**: in-memory sliding-window counters (`ConcurrentHashMap<UUID, RateWindow>`) over block break/place/explode events — synchronous since cancellation must happen sync, no DB round-trip on the hot path. Breach → cancel, optional auto-freeze, staff notify, async audit-log write. Applies regardless of WorldGuard region bypass or OP status — see `protect/` note above.
@@ -329,7 +373,7 @@ needs manual confirmation on a real server.
 1. **Core** — rank ladder + title system + fallback permission ladder + LuckPerms/Vault bridges, command framework + Essentials collision policy, unified ban system (`/ban` 24h+auto-rollback, `/tban` custom duration + opt-in rollback, `/permban` cascading name↔IP resolution, shared `CommandFlags`, `rigel_ip_history`), chat mute, audit log, first-admin bootstrap flow (auto-promote existing `ops.txt` holders to `Senior Admin` rank on first boot, documented as a one-time convenience). Exit: standalone (no perms plugin) verified; rank+ban tests green, including a cascade-permban test (ban by name pulls in all historical IPs, ban by IP pulls in all historical names).
 2. **Anti-grief core** — blocking primitives, anti-nuke, anti-spam, freeze, movement validator, command-spy, `MobPurgeService`/`EntityWipeService` (with scheduled auto-cleanup), `WorldGuardBridge` for admin-defined protected zones. Exit: anti-nuke cancellation tests pass; manual TNT-spam demo without flagging normal building; `/mobpurge` and `/entitywipe` each verified to only remove their intended entity classes (mobs vs. dropped items/orbs/projectiles); WorldGuard region + global anti-nuke both verified to apply independently.
 3. **World tools + rollback + cage** — `WorldEditBridge` (FAWE/WorldEdit/naive fallback), admin worlds, void/cleanroom generation, world reset, `cage/` rebuilt on the bridge, `CoreProtectBridge` rollback commands. Exit: cage restore and world reset both run through FAWE when present with no TPS collapse; `/punish rollback` correctly delegates to CoreProtect; graceful "please install CoreProtect" message when absent. `/protectarea` (`protect/area/`) landed here too, both Bukkit-event enforcement and the `EditSessionEvent` extent-chain layer (`protect/worldedit/extent/`) — see "Protected areas: /protectarea" section for the full split and why the extent chain's runtime behavior still needs manual verification on a real server.
-4. **Fun/gadgets + identity tools** — jump pads, landmines, novelty guns, particle trails, `disguise/` (LibsDisguises bridge), `skin/` (SkinsRestorer bridge + built-in fallback), `/whois`/`/tracker`/`/radar`, backup manager, announcer/MOTD. Each independently toggleable.
+4. **Fun/gadgets + identity tools** — `/whois`/`/tracker`/`/radar`, backup manager, announcer/MOTD landed earlier alongside other phases. Sub-phase F (`disguise/`, `skin/`, `fun/`) split into two batches — see "Fun, disguises, and skins" section: **F1** (`disguise/` LibsDisguises bridge + real forbidden-type enforcement, `skin/` SkinsRestorer presence bridge, `punish.freeze` hard-freeze replacing TFM's `/lockup`) is done; **F2** (jump pads, landmines, novelty guns, particle trails, novelty/troll commands, all in `fun/`) is a tracked follow-up, not built yet.
 4.5 **Web panel** — `webpanel/` module (see Ban system section): read-only stats/bans/permban-case dashboard, off by default, localhost-bound, token-authenticated. Exit: confirmed unreachable when disabled (default), confirmed token-gated and localhost-only when enabled with default config.
 4.6 **Discord bridge** — `discord/` module (see Discord bridge & admin chat section): Discord4J-based three-channel bridge (public/admin/console), account linking, rank-gated audited console-via-Discord. Exit: linking flow round-trips, an unlinked or under-ranked account cannot execute console commands even from the admin channel, every executed command lands in `rigel_audit_log`.
 5. **Polish/release** — optional TFM YAML importer (best-effort, UUID-resolves via Mojang API rather than trusting old username keys), docs, permissions reference, Hangar/Modrinth publish, 1.0.0 tag. Any future remote-control/webhook feature (TFM's HTTPD equivalent) ships **only** as a separate, off-by-default, token-authenticated addon post-1.0 — never embedded and on-by-default.
