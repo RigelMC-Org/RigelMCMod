@@ -28,3 +28,6 @@ plugins/
 CLAUDE.local.md
 .claude.json
 .mcp.json
+
+# Temporary Files
+temp/
