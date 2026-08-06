@@ -75,18 +75,20 @@ class RankServiceTest {
     }
 
     @Test
-    void offlineIdentityNeverInheritsAnElevatedRank() throws Exception {
+    void offlineIdentityIsTrustedLikeJava() throws Exception {
         UUID uuid = UUID.randomUUID();
-        // An OFFLINE identity's UUID is derived purely from the username, so anyone can
-        // claim it by connecting with the same name - rankOf() must never honor a stored
-        // elevated rank for that kind of connection, even if this exact UUID legitimately
-        // holds one (e.g. from a prior JAVA-identity login under the same offline-derived
-        // UUID, or a misconfigured server that resolved a real admin as OFFLINE).
+        // rankOf() used to downgrade any stored elevated rank to default for an OFFLINE
+        // identity (an offline/cracked/Eaglercraft UUID is derived purely from the
+        // connecting username, so it's technically spoofable) - reverted at the user's
+        // explicit request, since GeyserMC/Floodgate and Eaglercraft players are a core,
+        // intended part of this server's real population, not an edge case, and the old
+        // rule made it impossible for staff connecting through those paths to ever have
+        // their assigned rank actually respected. See rankOf()'s own javadoc.
         playerDao.upsertOnLogin(uuid, "Steve", PlayerIdentity.OFFLINE, System.currentTimeMillis());
         rankService.setRank(uuid, "senior_admin");
 
-        assertEquals("default", rankService.rankOf(uuid).id());
-        assertFalse(rankService.hasAtLeast(uuid, "moderator"));
+        assertEquals("senior_admin", rankService.rankOf(uuid).id());
+        assertTrue(rankService.hasAtLeast(uuid, "moderator"));
     }
 
     @Test

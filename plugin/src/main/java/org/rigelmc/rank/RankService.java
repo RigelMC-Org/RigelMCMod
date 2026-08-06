@@ -9,7 +9,6 @@ import java.util.UUID;
 import org.jetbrains.annotations.NotNull;
 import org.rigelmc.data.dao.PlayerDao;
 import org.rigelmc.data.dao.PlayerRecord;
-import org.rigelmc.identity.PlayerIdentity;
 
 /**
  * Rank ladder business logic: loading/seeding the ladder, resolving a player's rank, and
@@ -68,29 +67,31 @@ public final class RankService {
 
     /**
      * @return the player's current rank, falling back to the default rank if
-     *     unranked/unknown, <b>or if their most recently resolved identity is
-     *     {@link PlayerIdentity#OFFLINE}</b>. An OFFLINE (cracked/Eaglercraft) UUID is
-     *     derived purely from the connecting username ({@code UUID.nameUUIDFromBytes}),
-     *     not any cryptographic identity - anyone can claim it by picking the same name.
-     *     Never honor an elevated rank for a connection that can't be verified this way,
-     *     even if the stored row says so - that row could be a real admin's data that
-     *     just happens to share a UUID with whoever is connecting right now. JAVA
-     *     (Mojang-authenticated) and BEDROCK (Floodgate-verified) identities are both
-     *     still trusted normally. See {@code identity.online-mode} in config.yml and
-     *     {@code identity.IdentityService} for how identity gets resolved in the first
-     *     place.
+     *     unranked/unknown. Trusts the stored rank unconditionally regardless of the
+     *     player's resolved {@code identity.PlayerIdentity} - matching TFM's own real
+     *     behavior, which has no identity-based rank distrust at all.
+     *
+     *     <p>This deliberately reverses an earlier version of this method, which
+     *     downgraded any stored elevated rank to default for an {@code
+     *     identity.PlayerIdentity#OFFLINE} connection (an offline/cracked/Eaglercraft
+     *     UUID is derived purely from the connecting username, not any cryptographic
+     *     identity, so it's technically spoofable). Reverted at the user's explicit,
+     *     informed request: this server's real population includes GeyserMC/Floodgate
+     *     <i>and</i> Eaglercraft players as core, intended parts of its community, not an
+     *     edge case - the old rule made it impossible for staff who play through those
+     *     paths to ever have their assigned rank actually respected, which is a much
+     *     bigger, constantly-recurring practical problem than the theoretical spoofing
+     *     risk it guarded against on a trust-based Free-OP server. This is the only place
+     *     {@code identity.PlayerIdentity} ever gated behavior in this codebase - a full
+     *     grep confirms nothing else (ban enforcement included) actually branches on it in
+     *     code today, despite some surrounding javadoc/config prose discussing identity
+     *     trust more broadly.</p>
      */
     @NotNull
     public Rank rankOf(@NotNull UUID uuid) throws SQLException {
         return playerDao
                 .findByUuid(uuid)
-                .map(record -> {
-                    Rank stored = ranksById.getOrDefault(record.rankId(), defaultRank());
-                    if (!stored.isDefault() && record.identityType() == PlayerIdentity.OFFLINE) {
-                        return defaultRank();
-                    }
-                    return stored;
-                })
+                .map(record -> ranksById.getOrDefault(record.rankId(), defaultRank()))
                 .orElse(defaultRank());
     }
 
