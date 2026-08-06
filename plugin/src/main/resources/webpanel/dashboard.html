@@ -94,6 +94,21 @@
   #refreshBtn:hover { color: var(--text-primary); border-color: var(--baseline); }
   #refreshBtn:active { transform: translateY(1px); }
 
+  .server-ip-row {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin: -10px 0 20px;
+  }
+  .server-ip-row code {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 13px;
+    color: var(--accent-strong);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px 7px;
+  }
+
   .errbar {
     display: none;
     align-items: center;
@@ -274,6 +289,8 @@
     </div>
   </header>
 
+  <div class="server-ip-row">Server IP: <code id="serverIpValue">—</code></div>
+
   <div class="errbar" id="errbar">
     <span>Couldn't reach the server — showing the last known data. Retrying…</span>
   </div>
@@ -363,6 +380,7 @@
 
   var els = {
     lastUpdated: document.getElementById("lastUpdated"),
+    serverIpValue: document.getElementById("serverIpValue"),
     errbar: document.getElementById("errbar"),
     tpsValue: document.getElementById("tpsValue"),
     tpsSub: document.getElementById("tpsSub"),
@@ -459,6 +477,9 @@
     els.onlineSub.textContent = pct + "% capacity";
 
     els.uptimeValue.textContent = formatDuration(status.uptimeMillis);
+    if (status.serverIp) {
+      els.serverIpValue.textContent = status.serverIp;
+    }
     lastGeneratedAt = status.generatedAt;
   }
 

@@ -162,7 +162,10 @@ public final class WebPanelServer {
                 + "\"uptimeMillis\":" + JsonUtil.number(snapshot.uptimeMillis()) + ","
                 + "\"tps\":" + JsonUtil.number(snapshot.tps()) + ","
                 + "\"onlineCount\":" + JsonUtil.number(snapshot.onlineCount()) + ","
-                + "\"maxPlayers\":" + JsonUtil.number(snapshot.maxPlayers())
+                + "\"maxPlayers\":" + JsonUtil.number(snapshot.maxPlayers()) + ","
+                // Static config, not part of the periodically-rebuilt snapshot - read fresh
+                // here, same as webPanelSchematicsEnabled() is read fresh at start().
+                + "\"serverIp\":" + JsonUtil.string(plugin.rigelConfig().serverIpDomain())
                 + "}";
     }
 

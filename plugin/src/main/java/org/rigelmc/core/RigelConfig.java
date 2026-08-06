@@ -23,6 +23,19 @@ public final class RigelConfig {
     }
 
     /**
+     * @return {@code server.ip-domain} - the address players actually connect to (a domain,
+     *     not necessarily this backend's own address - the documented target topology puts
+     *     a Velocity proxy in front). Purely informational: substituted into the
+     *     {@code {ip}} placeholder in the tab list header/footer and sidebar scoreboard,
+     *     and shown on the web panel as "Server IP: {@code <value>}" - nothing here ever
+     *     reads it to make a networking decision.
+     */
+    @NotNull
+    public String serverIpDomain() {
+        return source.getString("server.ip-domain", "play.rigelmc.org");
+    }
+
+    /**
      * @param moduleId a module's {@link PluginModule#id()}
      * @return whether {@code modules.<moduleId>.enabled} is set, defaulting to {@code true}
      *     for every module except {@code webpanel}, which is opt-in
@@ -633,18 +646,25 @@ public final class RigelConfig {
         return source.getString("scoreboard.title", "<gold><bold>RigelMC");
     }
 
-    /** MiniMessage format per line; {@code {online}}/{@code {max}} are substituted before parsing. */
+    /**
+     * MiniMessage format per line; {@code {online}}/{@code {max}}/{@code {ip}} (see
+     * {@link #serverIpDomain}) are substituted before parsing.
+     */
     @NotNull
     public java.util.List<String> scoreboardLines() {
         return source.getStringList("scoreboard.lines");
     }
 
+    /** MiniMessage format; {@code {ip}} (see {@link #serverIpDomain}) is substituted before parsing. */
     @NotNull
     public String tablistHeader() {
         return source.getString("tablist.header", "<gold><bold>RigelMC");
     }
 
-    /** MiniMessage format; {@code {online}}/{@code {max}} are substituted before parsing. */
+    /**
+     * MiniMessage format; {@code {online}}/{@code {max}}/{@code {ip}} (see
+     * {@link #serverIpDomain}) are substituted before parsing.
+     */
     @NotNull
     public String tablistFooter() {
         return source.getString("tablist.footer", "<gray>Online: <white>{online}</white>/<white>{max}</white>");

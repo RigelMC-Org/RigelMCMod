@@ -15,8 +15,9 @@ import org.rigelmc.core.RigelConfig;
 
 /**
  * Configurable, toggleable sidebar scoreboard - title + a list of MiniMessage-formatted
- * lines ({@code {online}}/{@code {max}} placeholders), refreshed periodically like the
- * tab list footer. One shared {@link Scoreboard}/{@link Objective} rather than a
+ * lines ({@code {online}}/{@code {max}}/{@code {ip}} placeholders - see {@code
+ * RigelConfig#serverIpDomain}), refreshed periodically like the tab list footer. One
+ * shared {@link Scoreboard}/{@link Objective} rather than a
  * per-player one, since the content is server-wide, not per-viewer - simpler and cheaper
  * to keep in sync.
  *
@@ -59,11 +60,13 @@ public final class ScoreboardService {
         int size = lines.size();
         int onlineCount = Bukkit.getOnlinePlayers().size();
         int maxCount = Bukkit.getMaxPlayers();
+        String ipDomain = config.serverIpDomain();
 
         for (int i = 0; i < size; i++) {
             String raw = lines.get(i)
                     .replace("{online}", String.valueOf(onlineCount))
-                    .replace("{max}", String.valueOf(maxCount));
+                    .replace("{max}", String.valueOf(maxCount))
+                    .replace("{ip}", ipDomain);
             Component lineComponent = MiniMessage.miniMessage().deserialize(raw);
 
             Score score = objective.getScore("rigel_line_" + i);

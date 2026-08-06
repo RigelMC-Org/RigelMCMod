@@ -8,10 +8,10 @@ import org.jetbrains.annotations.NotNull;
 import org.rigelmc.core.RigelConfig;
 
 /**
- * Sets the tab-list header/footer (MiniMessage-formatted, {@code {online}}/{@code {max}}
- * placeholders in the footer) - applied on join and refreshed periodically for everyone
- * so the online count in the footer stays current. See {@code config.yml}'s
- * {@code tablist} section.
+ * Sets the tab-list header/footer (MiniMessage-formatted; {@code {online}}/{@code {max}}
+ * placeholders in the footer, {@code {ip}} in both - see {@code RigelConfig#serverIpDomain})
+ * - applied on join and refreshed periodically for everyone so the online count in the
+ * footer stays current. See {@code config.yml}'s {@code tablist} section.
  *
  * <p>Uses {@code Audience#sendPlayerListHeaderAndFooter(Component, Component)} (a
  * default method Adventure's {@code Audience} interface - {@link Player} implements it
@@ -26,10 +26,12 @@ import org.rigelmc.core.RigelConfig;
 public final class TabListBroadcaster {
 
     public void apply(@NotNull Player player, @NotNull RigelConfig config) {
-        Component header = MiniMessage.miniMessage().deserialize(config.tablistHeader());
+        String headerRaw = config.tablistHeader().replace("{ip}", config.serverIpDomain());
+        Component header = MiniMessage.miniMessage().deserialize(headerRaw);
         String footerRaw = config.tablistFooter()
                 .replace("{online}", String.valueOf(Bukkit.getOnlinePlayers().size()))
-                .replace("{max}", String.valueOf(Bukkit.getMaxPlayers()));
+                .replace("{max}", String.valueOf(Bukkit.getMaxPlayers()))
+                .replace("{ip}", config.serverIpDomain());
         Component footer = MiniMessage.miniMessage().deserialize(footerRaw);
         player.sendPlayerListHeaderAndFooter(header, footer);
     }

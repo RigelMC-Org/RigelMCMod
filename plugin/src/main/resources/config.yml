@@ -2,6 +2,13 @@
 # See docs/architecture.md and docs/permissions.md for the full design rationale
 # behind each section.
 
+server:
+  # The address players actually connect to - purely informational, never used to make a
+  # networking decision. Substituted into the "{ip}" placeholder in tablist.header/
+  # tablist.footer and scoreboard.lines below, and shown on the web panel as
+  # "Server IP: <value>".
+  ip-domain: "play.rigelmc.org"
+
 identity:
   # Force RigelMCMod to treat every non-Bedrock player as a verified premium (JAVA)
   # identity, regardless of what Bukkit's own server.getOnlineMode() reports. This
@@ -634,19 +641,22 @@ titles:
   developer: []
 
 tablist:
-  # MiniMessage format. {online}/{max} placeholders in the footer are substituted with
-  # the current online/max player counts before parsing, refreshed periodically.
+  # MiniMessage format. {online}/{max} placeholders in the footer, and {ip} (server.ip-
+  # domain above) in both header and footer, are substituted before parsing, refreshed
+  # periodically.
   header: "<gold><bold>RigelMC"
-  footer: "<gray>Online: <white>{online}</white>/<white>{max}</white>"
+  footer: "<gray>Online: <white>{online}</white>/<white>{max}</white> <dark_gray>|</dark_gray> <gray>IP: <white>{ip}</white>"
 
 scoreboard:
   # Toggle independently of the tab list - modules.scoreboard.enabled.
-  # MiniMessage format throughout; {online}/{max} placeholders substituted in lines,
-  # refreshed periodically. Empty strings are valid lines (blank spacer rows).
+  # MiniMessage format throughout; {online}/{max}/{ip} (server.ip-domain above)
+  # placeholders substituted in lines, refreshed periodically. Empty strings are valid
+  # lines (blank spacer rows).
   title: "<gold><bold>RigelMC"
   lines:
     - ""
     - "<gray>Online: <white>{online}</white>/<white>{max}</white>"
+    - "<gray>IP: <white>{ip}</white>"
 
 webpanel:
   # Off by default. Read-only dashboard (stats/bans/permban cases) on its own port. No
