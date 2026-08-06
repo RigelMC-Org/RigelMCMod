@@ -120,7 +120,7 @@ modules:
   # protect.worldedit.extent.ProtectAreaExtent.
   protectarea:
     enabled: true
-  # /cmdspy, /signspy, /potionspy, /whohas, /findip, /radar.
+  # /cmdspy, /signspy, /potionspy, /bookspy, /whohas, /findip, /radar.
   investigate:
     enabled: true
   # /myadmin - self-service login-message + info for a staff member's own admin entry.
@@ -684,6 +684,16 @@ world:
     # Name of the disposable superflat world /wipeflatlands manages. Created
     # automatically on first enable if it doesn't already exist.
     world-name: "flatlands"
+    # Pipe-delimited "height|blockType|height|blockType|..." layer string, passed to the
+    # standalone CleanroomGenerator plugin (github.com/nvx/CleanroomGenerator) when it's
+    # installed - used instead of vanilla's own flat generator specifically so Eaglercraft
+    # players can see/stand on the floor, not fall through an empty legacy-incompatible
+    # void (see world.CleanroomGeneratorBridge's javadoc). Ignored entirely if that plugin
+    # isn't installed. Bedrock is implicit unless the string starts with ".". Default
+    # matches TFM's own real value exactly (its flatlands.generate_params, studied
+    # directly): 16 stone, 32 dirt, 1 grass_block - 49 blocks tall from y=0, matching the
+    # hardcoded spawn height below.
+    generate-params: "16|stone|32|dirt|1|grass_block"
     autowipe:
       enabled: true
       interval-hours: 24
@@ -691,14 +701,19 @@ world:
       # automatic wipe, then are evacuated to the main world's spawn when it happens.
       # /wipeflatlands (manual trigger) skips the warning and wipes immediately.
       warning-minutes-before: 5
-    # Whether a wipe (manual /wipeflatlands or an automatic autowipe) restarts the whole
-    # server as part of wiping, rather than deleting/recreating the world in-place while
-    # the server keeps running. A restart guarantees the delete itself is reliable (no
-    # world-folder file handles can still be held by the old process once it's actually
-    # exited) at the cost of briefly disconnecting every player on the server, not just
-    # those in the flatlands world. Set to false for the lower-disruption in-place
-    # behavior instead.
-    wipe-restarts-server: true
+    # Whether a wipe (manual /wipeflatlands or an automatic autowipe) shuts the whole
+    # server down as part of wiping, rather than deleting/recreating the world in-place
+    # while the server keeps running. A shutdown guarantees the delete itself is reliable
+    # (no world-folder file handles can still be held by the old process once it's
+    # actually exited) at the cost of disconnecting every player on the server, not just
+    # those in the flatlands world - matching TFM's own real /wipeflatlands, this
+    # deliberately shuts the server down rather than trying to restart it, since a
+    # restart can only actually relaunch the process on setups with a wrapper/script that
+    # specifically supports it; whatever normally brings your server back up (a process
+    # supervisor, a panel, or you typing the start command again) is what does so here
+    # too, and the actual wipe happens automatically the moment it does. Set to false for
+    # the lower-disruption in-place behavior instead (no shutdown at all).
+    wipe-requires-restart: true
   spawn:
     # The actual spawn coordinates are NOT set here - run /setspawn (Senior Admin+) in
     # game to set/move it. They're stored in the database instead, like every other

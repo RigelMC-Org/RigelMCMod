@@ -37,8 +37,10 @@ import org.rigelmc.rank.PermissionGate;
 /**
  * Admin investigative/QoL tools - TFM ref: {@code Command_cmdspy}, {@code
  * Command_signspy}, {@code Command_potionspy}, {@code Command_whohas}, {@code
- * Command_findip}, {@code Command_radar}, each studied directly. All Moderator+ except
- * {@code /radar}, which TFM itself leaves open to everyone.
+ * Command_findip}, {@code Command_radar}, each studied directly. {@code /bookspy} has no
+ * TFM equivalent - added to close the same real gap a sign is already covered for (see
+ * {@code SpyListener}'s javadoc). All Moderator+ except {@code /radar}, which TFM itself
+ * leaves open to everyone.
  *
  * <p>{@code /findip} necessarily differs from TFM's own: RigelMCMod never stores
  * plaintext IPs (salted HMAC-SHA256 hashes only, see {@code identity.IpHasher}), so this
@@ -95,6 +97,8 @@ public final class InvestigateModule implements PluginModule {
         registrar.register(signSpyCommand(), "Toggle relaying sign edits to you - Moderator+", List.of("sspy"));
         registrar.register(potionSpyCommand(), "Toggle relaying thrown potions to you - Moderator+",
                 List.of("potspy"));
+        registrar.register(bookSpyCommand(), "Toggle relaying written book contents to you - Moderator+",
+                List.of("bspy"));
         registrar.register(whoHasCommand(), "Find (or clear) online players holding a specific item - Moderator+");
         registrar.register(findIpCommand(), "Look up a player's known IP hashes - Moderator+", List.of("ips", "ip"));
         registrar.register(radarCommand(), "List nearby online players by distance");
@@ -153,6 +157,24 @@ public final class InvestigateModule implements PluginModule {
                             .sendMessage(Component.text(
                                     on ? "Potion spy enabled - thrown potions will be relayed to you."
                                             : "Potion spy disabled.",
+                                    NamedTextColor.AQUA));
+                    return 1;
+                })
+                .build();
+    }
+
+    // ---- /bookspy ---------------------------------------------------------------------------
+
+    private LiteralCommandNode<CommandSourceStack> bookSpyCommand() {
+        return Commands.literal("bookspy")
+                .requires(source -> hasRank(source, "moderator") && source.getSender() instanceof Player)
+                .executes(ctx -> {
+                    boolean on = spyService.toggleBookSpy(senderUuid(ctx));
+                    ctx.getSource()
+                            .getSender()
+                            .sendMessage(Component.text(
+                                    on ? "Book spy enabled - written book contents will be relayed to you."
+                                            : "Book spy disabled.",
                                     NamedTextColor.AQUA));
                     return 1;
                 })

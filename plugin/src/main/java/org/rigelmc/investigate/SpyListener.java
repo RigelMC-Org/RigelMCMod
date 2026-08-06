@@ -1,5 +1,6 @@
 package org.rigelmc.investigate;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -15,14 +16,20 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.SignChangeEvent;
 import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.player.PlayerEditBookEvent;
+import org.bukkit.inventory.meta.BookMeta;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Relays other players' commands/sign edits/thrown potions to staff who've opted into the
- * matching spy mode - TFM ref: {@code CommandSpy.java}, {@code SignSpy.java}, {@code
- * PotionSpy.java}, studied directly, simplified to this codebase's own session-only
- * toggle model (see {@link SpyService}'s javadoc) rather than porting TFM's ADMINS/OPS/
- * ALL command-spy submodes or its fake-client-side-sign preview feature.
+ * Relays other players' commands/sign edits/thrown potions/book contents to staff who've
+ * opted into the matching spy mode - TFM ref: {@code CommandSpy.java}, {@code
+ * SignSpy.java}, {@code PotionSpy.java}, studied directly, simplified to this codebase's
+ * own session-only toggle model (see {@link SpyService}'s javadoc) rather than porting
+ * TFM's ADMINS/OPS/ALL command-spy submodes or its fake-client-side-sign preview feature.
+ * {@code /bookspy} has no TFM equivalent - added to close the same real gap a sign is
+ * already covered for (arbitrarily long player-authored text, a real vector for hidden
+ * profanity/links/grief that a chat filter never sees since it's never sent as a chat
+ * message at all).
  *
  * <p>{@code MONITOR} priority throughout - relaying happens after the underlying action
  * has already been decided (dispatched/cancelled by something else), never interferes
@@ -82,6 +89,40 @@ public final class SpyListener implements Listener {
                 "[PotionSpy] " + thrower.getName() + " threw a " + potionName + " at "
                         + formatLocation(potion.getLocation()),
                 NamedTextColor.GRAY));
+    }
+
+    /**
+     * Fires whenever a player finishes editing a book and quill - both a plain draft save
+     * and a final signing (see {@link PlayerEditBookEvent#isSigning}), unlike {@link
+     * #onSignChange} which only ever captures a sign's single finalizing edit. Relaying on
+     * every save rather than signing alone matters here: a player never has to actually
+     * sign a book to keep writing arbitrarily long content into it, so gating this on
+     * {@code isSigning()} would let an unsigned "notebook" full of grief/harassment text
+     * slip past entirely.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onEditBook(@NotNull PlayerEditBookEvent event) {
+        Set<UUID> spies = spyService.bookSpies();
+        if (spies.isEmpty()) {
+            return;
+        }
+        Player editor = event.getPlayer();
+        BookMeta meta = event.getNewBookMeta();
+        List<String> pages = meta.getPages();
+
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < pages.size(); i++) {
+            if (i > 0) {
+                text.append(" | ");
+            }
+            text.append("[p").append(i + 1).append("] ").append(pages.get(i));
+        }
+
+        Component message = event.isSigning()
+                ? Component.text("[BookSpy] " + editor.getName() + " signed a book \""
+                        + meta.getTitle() + "\" by " + meta.getAuthor() + ": " + text, NamedTextColor.GRAY)
+                : Component.text("[BookSpy] " + editor.getName() + " edited a book draft: " + text, NamedTextColor.GRAY);
+        relay(spies, editor.getUniqueId(), message);
     }
 
     private static void relay(Set<UUID> spies, UUID subjectUuid, Component message) {

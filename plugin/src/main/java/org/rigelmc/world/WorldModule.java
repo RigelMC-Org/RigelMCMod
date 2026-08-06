@@ -148,14 +148,31 @@ public final class WorldModule implements PluginModule {
         return 1;
     }
 
+    /**
+     * Console/RCON-only, matching TFM's own real {@code Command_wipeflatlands} exactly
+     * ({@code SourceType.ONLY_CONSOLE}) - deliberate, not an oversight: when {@code
+     * world.flatlands.wipe-requires-restart} is on (the default), this command shuts the
+     * whole server down as part of the wipe (see {@code FlatlandsService}'s javadoc), so
+     * an in-game sender would immediately kick themselves with little warning.
+     *
+     * <p>Deliberately no top-level {@code .requires()} gate - a failed {@code .requires()}
+     * hides the whole node from Brigadier's parser, surfacing to a player as a confusing
+     * raw "Unknown or incomplete command" instead of a clear rejection message (the same
+     * class of issue {@code rmcm.RmcmModule}/{@code rank.RankAdminModule}'s own javadoc
+     * already documents and fixes the same way). The console-only check happens inside
+     * the execute body instead.</p>
+     */
     private LiteralCommandNode<CommandSourceStack> wipeFlatlandsCommand() {
         return Commands.literal("wipeflatlands")
-                .requires(source -> !(source.getSender() instanceof Player player)
-                        || permissionGate.hasAtLeastCached(player.getUniqueId(), "senior_admin"))
                 .executes(ctx -> {
-                    ctx.getSource()
-                            .getSender()
-                            .sendMessage(Component.text("Wiping the flatlands world now...", NamedTextColor.GOLD));
+                    CommandSender sender = ctx.getSource().getSender();
+                    if (sender instanceof Player) {
+                        sender.sendMessage(Component.text(
+                                "/wipeflatlands can only be run from the server console or RCON, not in-game.",
+                                NamedTextColor.RED));
+                        return 0;
+                    }
+                    sender.sendMessage(Component.text("Wiping the flatlands world now...", NamedTextColor.GOLD));
                     flatlandsService.wipeNow(false);
                     return 1;
                 })

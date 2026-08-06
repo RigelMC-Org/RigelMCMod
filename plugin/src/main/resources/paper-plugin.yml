@@ -56,6 +56,14 @@ dependencies:
       load: BEFORE
       required: false
       join-classpath: false
+    # world.CleanroomGeneratorBridge only ever calls Plugin#getDefaultWorldGenerator - a
+    # standard method every Bukkit plugin already exposes, not CleanroomGenerator-specific
+    # API - so join-classpath: false is correct here, unlike WorldEdit/PacketEvents below,
+    # which compile directly against those plugins' own classes.
+    CleanroomGenerator:
+      load: BEFORE
+      required: false
+      join-classpath: false
     # Unlike every other soft dependency above (excluding packetevents, same reasoning),
     # RigelMCMod compiles directly against WorldEdit's classes (compileOnly, see
     # plugin/build.gradle.kts - protect.worldedit.extent's EditSessionEvent extent chain)

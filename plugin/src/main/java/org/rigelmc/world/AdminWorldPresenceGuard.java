@@ -1,5 +1,6 @@
 package org.rigelmc.world;
 
+import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
@@ -43,7 +44,23 @@ public final class AdminWorldPresenceGuard implements Listener {
 
     private static final long SWEEP_INTERVAL_TICKS = 100L; // 5 seconds - frequent enough that a boat-riding evasion can't sit there long
 
+    /**
+     * User-reported, real incident this delay fixes: {@code core.PlayerLoginListener}'s
+     * own {@code PlayerJoinEvent} handler populates {@code rank.PermissionGate}'s online-
+     * rank cache asynchronously (a DB round-trip, then a hop back to the main thread) -
+     * Bukkit fires every {@code PlayerJoinEvent} listener back-to-back in the same
+     * synchronous dispatch pass regardless of priority, it does not wait for one
+     * listener's async work to finish before running the next. Checking {@link
+     * #eject} immediately in {@link #onJoin} therefore reads that cache before it's
+     * populated for every single joining player, false-positive-ejecting a legitimate
+     * Senior Admin whose last-known location happened to be inside the admin world. A
+     * short delay gives that async population time to land first; {@link #sweep()}
+     * (every 5s) is still the backstop if it somehow hasn't by then.
+     */
+    private static final long JOIN_CHECK_DELAY_TICKS = 20L; // 1 second
+
     private final AdminWorldService adminWorldService;
+    private RigelMCMod plugin;
 
     public AdminWorldPresenceGuard(@NotNull AdminWorldService adminWorldService) {
         this.adminWorldService = adminWorldService;
@@ -51,6 +68,7 @@ public final class AdminWorldPresenceGuard implements Listener {
 
     /** Starts the periodic sweep. Call once from {@code WorldModule#registerListeners}. */
     public void start(@NotNull RigelMCMod plugin) {
+        this.plugin = plugin;
         Bukkit.getScheduler().runTaskTimer(plugin, this::sweep, SWEEP_INTERVAL_TICKS, SWEEP_INTERVAL_TICKS);
     }
 
@@ -63,11 +81,18 @@ public final class AdminWorldPresenceGuard implements Listener {
      * {@link PlayerChangedWorldEvent} only fires on an in-session world <i>change</i> - a
      * player logging in with their last-known location already inside the admin world
      * (e.g. a prior exploit, or a bugged plugin setting it) is a first-time world
-     * assignment, not a change, so it needs its own check.
+     * assignment, not a change, so it needs its own check. Deliberately delayed rather
+     * than immediate - see {@link #JOIN_CHECK_DELAY_TICKS}'s own javadoc.
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onJoin(@NotNull PlayerJoinEvent event) {
-        eject(event.getPlayer());
+        UUID uuid = event.getPlayer().getUniqueId();
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            Player stillOnline = Bukkit.getPlayer(uuid);
+            if (stillOnline != null) {
+                eject(stillOnline);
+            }
+        }, JOIN_CHECK_DELAY_TICKS);
     }
 
     private void sweep() {

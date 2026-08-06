@@ -707,6 +707,23 @@ public final class RigelConfig {
         return source.getString("world.flatlands.world-name", "flatlands");
     }
 
+    /**
+     * @return {@code world.flatlands.generate-params} - the pipe-delimited
+     *     {@code "height|blockType|height|blockType|..."} layer string passed to the
+     *     CleanroomGenerator plugin's own real generator when it's installed (see {@code
+     *     world.CleanroomGeneratorBridge}) - entirely ignored if it isn't, since vanilla's
+     *     own fallback ({@code WorldType.FLAT}) has no equivalent parameterization this
+     *     project attempts to translate. Defaults to TFM's own real value (its {@code
+     *     flatlands.generate_params}, studied directly from its production config.yml):
+     *     bedrock (implicit unless the string starts with {@code .}), 16 stone, 32 dirt,
+     *     1 grass_block on top - a solid, walkable superflat, not a true void, despite the
+     *     generator's "Cleanroom" name.
+     */
+    @NotNull
+    public String flatlandsGenerationParams() {
+        return source.getString("world.flatlands.generate-params", "16|stone|32|dirt|1|grass_block");
+    }
+
     public boolean flatlandsAutowipeEnabled() {
         return source.getBoolean("world.flatlands.autowipe.enabled", true);
     }
@@ -722,20 +739,25 @@ public final class RigelConfig {
     }
 
     /**
-     * @return {@code world.flatlands.wipe-restarts-server} - whether {@code /wipeflatlands}
-     *     (manual or automatic) restarts the whole server as part of the wipe, rather than
+     * @return {@code world.flatlands.wipe-requires-restart} - whether {@code /wipeflatlands}
+     *     (manual or automatic) shuts the whole server down as part of the wipe, rather than
      *     deleting/recreating the world in-place while the server keeps running. Deleting a
      *     world folder while other worlds in the same JVM are still loaded has no OS-level
      *     guarantee every file handle has actually been released (observed unreliable on
-     *     some setups); a restart-based wipe instead marks the wipe pending, restarts, and
-     *     deletes the folder on the fresh boot before any world is loaded at all - the only
-     *     way to make the delete itself fully reliable. Defaults to {@code true} since a
-     *     reliable wipe was the explicit ask; set to {@code false} to go back to the
-     *     lower-disruption in-place behavior (only the flatlands world's own players are
-     *     affected, not the whole server) if the restart's downtime isn't wanted.
+     *     some setups); this instead marks the wipe pending and shuts down, deleting the
+     *     folder on the next boot before any world is loaded at all - the only way to make
+     *     the delete itself fully reliable. Deliberately a {@code shutdown()}, not a {@code
+     *     restart()} - see {@code world.FlatlandsService}'s own javadoc for why trusting
+     *     {@code restart()} to actually relaunch the process was a real, user-reported bug,
+     *     not a hypothetical one; matches TFM's own real {@code Command_wipeflatlands}
+     *     exactly, which requires the operator (or their process supervisor) to bring the
+     *     server back up themselves. Defaults to {@code true} since a reliable wipe was the
+     *     explicit ask; set to {@code false} to go back to the lower-disruption in-place
+     *     behavior (only the flatlands world's own players are affected, no shutdown at
+     *     all) if the downtime isn't wanted.
      */
-    public boolean flatlandsWipeRestartsServer() {
-        return source.getBoolean("world.flatlands.wipe-restarts-server", true);
+    public boolean flatlandsWipeRequiresRestart() {
+        return source.getBoolean("world.flatlands.wipe-requires-restart", true);
     }
 
     @NotNull

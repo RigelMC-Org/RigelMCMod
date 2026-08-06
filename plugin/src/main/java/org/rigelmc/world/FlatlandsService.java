@@ -24,25 +24,39 @@ import org.rigelmc.data.dao.WorldStateDao;
 /**
  * Manages the disposable "flatlands" sandbox world: creating it on first enable,
  * wiping it on demand ({@code /wipeflatlands}) or automatically on a configurable
- * interval - see docs/architecture.md "world/" module. Deliberately reuses vanilla's
- * own superflat generator ({@link WorldType#FLAT}) rather than a custom
- * {@code ChunkGenerator}, consistent with this project's "reuse a proven tool instead
- * of reinventing it" pattern elsewhere (CoreProtect, LibsDisguises, ...).
+ * interval - see docs/architecture.md "world/" module. Generates with the standalone
+ * CleanroomGenerator plugin when it's installed (user-requested, for Eaglercraft
+ * compatibility - see {@link CleanroomGeneratorBridge}'s javadoc), falling back to
+ * vanilla's own superflat generator ({@link WorldType#FLAT}) otherwise - consistent with
+ * this project's "reuse a proven tool instead of reinventing it" pattern elsewhere
+ * (CoreProtect, LibsDisguises, ...).
  *
- * <p><b>Restart-based wipe</b> (the default - {@link RigelConfig#flatlandsWipeRestartsServer}):
+ * <p><b>Shutdown-based wipe</b> (the default - {@link RigelConfig#flatlandsWipeRequiresRestart}):
  * deleting a world folder from disk while the server process is still running has no
  * OS-level guarantee that every file handle Bukkit/the JVM ever opened for it has actually
  * been released, even after {@link Bukkit#unloadWorld}, on every platform/filesystem - a
  * user-reported real-world reliability concern, not a hypothetical one. Instead of deleting
- * in-place, a restart-based wipe marks the wipe <b>pending</b> in {@link #worldStateDao}
- * (survives the restart - it's a separate file from the world folder itself, never touched
- * by the wipe), restarts the whole server via {@link Bukkit#getServer()}{@code .restart()},
- * and only actually deletes the folder on the fresh boot's {@link #initializeWorld()} call -
- * <i>before</i> any world is loaded at all in the new process, which is the only point a
- * stale file handle from the old process is fully guaranteed to be irrelevant (the old
- * process has, by definition, completely exited by the time a new one is running). The
- * lower-disruption in-place path (delete-while-running, only flatlands-world players
- * affected) is still available by setting that config key to {@code false}.</p>
+ * in-place, this marks the wipe <b>pending</b> in {@link #worldStateDao} (survives the
+ * process exiting - it's a separate file from the world folder itself, never touched by the
+ * wipe) and calls {@link Bukkit#getServer()}{@code .shutdown()} - <i>not</i> {@code
+ * .restart()}. TFM's own real {@code Command_wipeflatlands} (studied directly) makes the
+ * exact same choice, and for a concrete reason: {@code Server#restart()} only actually
+ * relaunches the process if the server was started through a wrapper/script that
+ * specifically supports Paper's restart protocol - on any setup that doesn't (a bare
+ * {@code java -jar paper.jar}, most container/panel setups without that exact wrapper
+ * configured), {@code restart()} either does nothing more than a shutdown or silently never
+ * comes back, so the pending flag's actual deletion step - which only runs at the very
+ * start of the <i>next</i> boot - never gets a next boot to run in. This is a confirmed,
+ * user-reported failure mode this project's own earlier {@code restart()}-based version
+ * hit in practice, not a theoretical concern - {@code shutdown()} makes no such assumption:
+ * whatever brings the process back up (a supervisor, a panel, or an operator typing the
+ * start command again) will trigger {@link #initializeWorld()} on its own, at which point
+ * the pending flag is still there and the actual deletion happens - <i>before</i> any world
+ * is loaded at all in the new process, which is the only point a stale file handle from the
+ * old process is fully guaranteed to be irrelevant (the old process has, by definition,
+ * completely exited by the time a new one is running). The lower-disruption in-place path
+ * (delete-while-running, only flatlands-world players affected, no shutdown at all) is
+ * still available by setting that config key to {@code false}.</p>
  *
  * <p><b>Unverified against a live server</b> in this session - world creation/deletion
  * needs a real Bukkit world container this test environment doesn't have. The pure
@@ -54,12 +68,21 @@ public final class FlatlandsService {
     private final RigelMCMod plugin;
     private final WorldStateDao worldStateDao;
     private final ExecutorService dbExecutor;
+    private final CleanroomGeneratorBridge cleanroomGeneratorBridge;
 
     public FlatlandsService(
             @NotNull RigelMCMod plugin, @NotNull WorldStateDao worldStateDao, @NotNull ExecutorService dbExecutor) {
+        this(plugin, worldStateDao, dbExecutor, new CleanroomGeneratorBridge());
+    }
+
+    /** Test-only constructor - injects the generator bridge directly. */
+    FlatlandsService(
+            @NotNull RigelMCMod plugin, @NotNull WorldStateDao worldStateDao, @NotNull ExecutorService dbExecutor,
+            @NotNull CleanroomGeneratorBridge cleanroomGeneratorBridge) {
         this.plugin = plugin;
         this.worldStateDao = worldStateDao;
         this.dbExecutor = dbExecutor;
+        this.cleanroomGeneratorBridge = cleanroomGeneratorBridge;
     }
 
     /**
@@ -131,8 +154,8 @@ public final class FlatlandsService {
 
     /** Must run on the main thread. */
     private void performWipe(String name) {
-        if (plugin.rigelConfig().flatlandsWipeRestartsServer()) {
-            performRestartWipe(name);
+        if (plugin.rigelConfig().flatlandsWipeRequiresRestart()) {
+            performShutdownWipe(name);
             return;
         }
 
@@ -159,29 +182,63 @@ public final class FlatlandsService {
 
     /**
      * Marks the wipe pending (so {@link #initializeWorld()} deletes the folder on the
-     * fresh boot before anything else touches it - see this class's javadoc), then
-     * restarts the whole server a few seconds later, giving the broadcast below a moment
-     * to actually reach clients before they're disconnected.
+     * next boot before anything else touches it - see this class's javadoc), then shuts
+     * the whole server down - matching TFM's own real {@code Command_wipeflatlands}
+     * exactly, including kicking every online player with a specific reason first rather
+     * than just letting the shutdown disconnect them with a generic message.
+     *
+     * <p>Deliberately does <b>not</b> attempt to bring the server back up itself - see
+     * this class's own javadoc for why {@code restart()} can't be trusted to actually do
+     * that on every setup. Whatever the operator's own process supervisor/panel/manual
+     * restart habit already is remains in charge of the next boot, same as TFM.</p>
      */
-    private void performRestartWipe(String name) {
-        Bukkit.broadcast(Component.text(
-                "The server is restarting to wipe the flatlands world - you'll be reconnected shortly.",
-                NamedTextColor.GOLD));
+    private void performShutdownWipe(String name) {
+        Component notice = Component.text(
+                "The server is going offline for a flatlands wipe - come back in a few minutes.",
+                NamedTextColor.GOLD);
+        Bukkit.broadcast(notice);
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            player.kick(notice);
+        }
+
         dbExecutor.submit(() -> {
             try {
                 worldStateDao.setPendingWipe(name, true);
             } catch (SQLException e) {
                 plugin.getLogger().log(Level.WARNING,
-                        "Failed to persist a pending flatlands wipe flag - restarting anyway, but the wipe"
-                                + " itself won't happen without this flag set", e);
+                        "Failed to persist a pending flatlands wipe flag - shutting down anyway, but the wipe"
+                                + " itself won't happen on the next boot without this flag set", e);
             }
-            Bukkit.getScheduler().runTask(plugin,
-                    () -> Bukkit.getScheduler().runTaskLater(plugin, () -> Bukkit.getServer().restart(), 60L));
+            Bukkit.getScheduler().runTask(plugin, () -> Bukkit.getServer().shutdown());
         });
     }
 
+    /**
+     * Uses the CleanroomGenerator plugin's own real generator when it's installed (user-
+     * requested, for Eaglercraft compatibility - see {@link CleanroomGeneratorBridge}'s
+     * javadoc), falling back to vanilla's own {@code WorldType.FLAT} otherwise. Explicitly
+     * sets the spawn location afterward - matching TFM's own real {@code
+     * world.Flatlands#generateWorld} exactly ({@code world.setSpawnLocation(0, 50, 0)},
+     * {@code world.setSpawnFlags(false, false)}), which this project's own version never
+     * did, leaving Paper's own auto-spawn-search to pick wherever it likes (a real,
+     * user-reported symptom: players spawning in an empty void well below any generated
+     * floor). {@code y=50} matches TFM's own hardcoded value for its own hardcoded default
+     * layer heights, which {@link RigelConfig#flatlandsGenerationParams}'s default matches
+     * exactly (49 blocks of floor from y=0) - same known limitation as TFM's own real code
+     * if that config is changed to a different total height, not something TFM itself
+     * computes dynamically either.
+     */
     private void createWorld(String name) {
-        new WorldCreator(name).type(WorldType.FLAT).generateStructures(false).createWorld();
+        RigelConfig config = plugin.rigelConfig();
+        WorldCreator creator = new WorldCreator(name).generateStructures(false);
+        cleanroomGeneratorBridge.resolveGenerator(name, config.flatlandsGenerationParams())
+                .ifPresentOrElse(creator::generator, () -> creator.type(WorldType.FLAT));
+
+        World world = creator.createWorld();
+        if (world != null) {
+            world.setSpawnFlags(false, false);
+            world.setSpawnLocation(0, 50, 0);
+        }
     }
 
     private void deleteWorldFolderRecursively(File worldFolder) {
