@@ -31,32 +31,44 @@ import org.rigelmc.data.dao.WorldStateDao;
  * this project's "reuse a proven tool instead of reinventing it" pattern elsewhere
  * (CoreProtect, LibsDisguises, ...).
  *
- * <p><b>Shutdown-based wipe</b> (the default - {@link RigelConfig#flatlandsWipeRequiresRestart}):
- * deleting a world folder from disk while the server process is still running has no
- * OS-level guarantee that every file handle Bukkit/the JVM ever opened for it has actually
- * been released, even after {@link Bukkit#unloadWorld}, on every platform/filesystem - a
- * user-reported real-world reliability concern, not a hypothetical one. Instead of deleting
- * in-place, this marks the wipe <b>pending</b> in {@link #worldStateDao} (survives the
- * process exiting - it's a separate file from the world folder itself, never touched by the
- * wipe) and calls {@link Bukkit#getServer()}{@code .shutdown()} - <i>not</i> {@code
- * .restart()}. TFM's own real {@code Command_wipeflatlands} (studied directly) makes the
- * exact same choice, and for a concrete reason: {@code Server#restart()} only actually
- * relaunches the process if the server was started through a wrapper/script that
- * specifically supports Paper's restart protocol - on any setup that doesn't (a bare
- * {@code java -jar paper.jar}, most container/panel setups without that exact wrapper
- * configured), {@code restart()} either does nothing more than a shutdown or silently never
- * comes back, so the pending flag's actual deletion step - which only runs at the very
- * start of the <i>next</i> boot - never gets a next boot to run in. This is a confirmed,
- * user-reported failure mode this project's own earlier {@code restart()}-based version
- * hit in practice, not a theoretical concern - {@code shutdown()} makes no such assumption:
- * whatever brings the process back up (a supervisor, a panel, or an operator typing the
- * start command again) will trigger {@link #initializeWorld()} on its own, at which point
- * the pending flag is still there and the actual deletion happens - <i>before</i> any world
- * is loaded at all in the new process, which is the only point a stale file handle from the
- * old process is fully guaranteed to be irrelevant (the old process has, by definition,
- * completely exited by the time a new one is running). The lower-disruption in-place path
- * (delete-while-running, only flatlands-world players affected, no shutdown at all) is
- * still available by setting that config key to {@code false}.</p>
+ * <p><b>Two wipe modes</b>, selected by {@link RigelConfig#flatlandsWipeRequiresRestart}:</p>
+ *
+ * <p><b>In-place</b> (the default, {@code false}): evacuates anyone in the flatlands world
+ * to the main world's spawn, safely {@link Bukkit#unloadWorld unloads} it, deletes the
+ * folder, and recreates it - finishes in seconds, no shutdown at all, only the flatlands
+ * world's own players are ever affected. This is the default specifically because the
+ * restart-based mode below has a confirmed real-world failure mode: most container/panel
+ * setups (Pterodactyl confirmed directly, user-reported) only auto-restart a server process
+ * on an <i>unexpected</i> exit (a crash) - a graceful, intentional {@code shutdown()} is
+ * treated as "the operator meant to stop this" and nothing brings it back up, so the wipe
+ * silently never completes from the operator's point of view even though the shutdown-side
+ * half of the command worked exactly as designed.</p>
+ *
+ * <p><b>Restart-based</b> ({@code true} - opt in only if your setup's process supervisor is
+ * confirmed to restart after a <i>clean</i> stop, not just a crash): deleting a world folder
+ * from disk while the server process is still running has no OS-level guarantee that every
+ * file handle Bukkit/the JVM ever opened for it has actually been released, even after
+ * {@link Bukkit#unloadWorld}, on every platform/filesystem - a separate, real reliability
+ * concern from the auto-restart one above, and the reason this mode exists at all. Instead
+ * of deleting in-place, this marks the wipe <b>pending</b> in {@link #worldStateDao}
+ * (survives the process exiting - it's a separate file from the world folder itself, never
+ * touched by the wipe) and calls {@link Bukkit#getServer()}{@code .shutdown()} - <i>not</i>
+ * {@code .restart()}. TFM's own real {@code Command_wipeflatlands} (studied directly) makes
+ * the exact same {@code shutdown()}-not-{@code restart()} choice, and for a concrete reason:
+ * {@code Server#restart()} only actually relaunches the process if the server was started
+ * through a wrapper/script that specifically supports Paper's restart protocol - on any
+ * setup that doesn't (a bare {@code java -jar paper.jar}, most container/panel setups
+ * without that exact wrapper configured), {@code restart()} either does nothing more than a
+ * shutdown or silently never comes back, so the pending flag's actual deletion step - which
+ * only runs at the very start of the <i>next</i> boot - never gets a next boot to run in.
+ * This was a confirmed, user-reported failure mode this project's own earlier {@code
+ * restart()}-based version hit in practice, not a theoretical concern - {@code shutdown()}
+ * makes no such assumption: whatever brings the process back up (a supervisor, a panel, or
+ * an operator typing the start command again) will trigger {@link #initializeWorld()} on
+ * its own, at which point the pending flag is still there and the actual deletion happens -
+ * <i>before</i> any world is loaded at all in the new process, which is the only point a
+ * stale file handle from the old process is fully guaranteed to be irrelevant (the old
+ * process has, by definition, completely exited by the time a new one is running).</p>
  *
  * <p><b>Unverified against a live server</b> in this session - world creation/deletion
  * needs a real Bukkit world container this test environment doesn't have. The pure
@@ -69,20 +81,37 @@ public final class FlatlandsService {
     private final WorldStateDao worldStateDao;
     private final ExecutorService dbExecutor;
     private final CleanroomGeneratorBridge cleanroomGeneratorBridge;
+    private final EssentialsWarpBridge essentialsWarpBridge;
+    private volatile boolean wipeInProgress;
 
     public FlatlandsService(
             @NotNull RigelMCMod plugin, @NotNull WorldStateDao worldStateDao, @NotNull ExecutorService dbExecutor) {
-        this(plugin, worldStateDao, dbExecutor, new CleanroomGeneratorBridge());
+        this(plugin, worldStateDao, dbExecutor, new CleanroomGeneratorBridge(),
+                new EssentialsWarpBridge(plugin.getLogger()));
     }
 
-    /** Test-only constructor - injects the generator bridge directly. */
+    /** Test-only constructor - injects the generator/warp bridges directly. */
     FlatlandsService(
             @NotNull RigelMCMod plugin, @NotNull WorldStateDao worldStateDao, @NotNull ExecutorService dbExecutor,
-            @NotNull CleanroomGeneratorBridge cleanroomGeneratorBridge) {
+            @NotNull CleanroomGeneratorBridge cleanroomGeneratorBridge,
+            @NotNull EssentialsWarpBridge essentialsWarpBridge) {
         this.plugin = plugin;
         this.worldStateDao = worldStateDao;
         this.dbExecutor = dbExecutor;
         this.cleanroomGeneratorBridge = cleanroomGeneratorBridge;
+        this.essentialsWarpBridge = essentialsWarpBridge;
+    }
+
+    /**
+     * @return {@code true} while an in-place wipe ({@link RigelConfig#flatlandsWipeRequiresRestart}
+     *     {@code = false}) is between evacuating the world and finishing its recreation -
+     *     lets {@code world.WorldModule}'s {@code /flatlands} teleport command give a
+     *     clearer "being wiped, try again shortly" message instead of the generic "isn't
+     *     ready yet" one during that window. Always {@code false} for the restart-based
+     *     mode - there's no in-game player able to ask during a full server shutdown.
+     */
+    public boolean isWipeInProgress() {
+        return wipeInProgress;
     }
 
     /**
@@ -112,7 +141,21 @@ public final class FlatlandsService {
                 }
                 plugin.getLogger().info("Completed a pending restart-based flatlands wipe on boot.");
             }
-            Bukkit.getScheduler().runTask(plugin, this::ensureWorldExists);
+            boolean justWiped = pending;
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                ensureWorldExists();
+                if (justWiped) {
+                    // The world was just recreated fresh under the same name - any warp
+                    // still pointing into it is now pointing at terrain that no longer
+                    // exists. See EssentialsWarpBridge's javadoc.
+                    int removed = essentialsWarpBridge.removeWarpsInWorld(name);
+                    if (removed > 0) {
+                        plugin.getLogger()
+                                .info("Removed " + removed + " EssentialsX warp(s) pointing into the flatlands"
+                                        + " world after a restart-based wipe.");
+                    }
+                }
+            });
         });
     }
 
@@ -159,6 +202,7 @@ public final class FlatlandsService {
             return;
         }
 
+        wipeInProgress = true;
         World world = Bukkit.getWorld(name);
         if (world != null) {
             World safeWorld = Bukkit.getWorlds().get(0);
@@ -174,7 +218,18 @@ public final class FlatlandsService {
             deleteWorldFolderRecursively(new File(Bukkit.getWorldContainer(), name));
             Bukkit.getScheduler().runTask(plugin, () -> {
                 createWorld(name);
-                Bukkit.broadcast(Component.text("The flatlands world has been wiped.", NamedTextColor.GREEN));
+                // The world was just recreated fresh under the same name - any warp still
+                // pointing into it is now pointing at terrain that no longer exists. See
+                // EssentialsWarpBridge's javadoc. Must run after createWorld() so the world
+                // is loaded again and warp lookups can actually resolve against it.
+                int removedWarps = essentialsWarpBridge.removeWarpsInWorld(name);
+                wipeInProgress = false;
+                Bukkit.broadcast(removedWarps > 0
+                        ? Component.text(
+                                "The flatlands world has been wiped. (" + removedWarps
+                                        + " warp(s) pointing into it were also removed.)",
+                                NamedTextColor.GREEN)
+                        : Component.text("The flatlands world has been wiped.", NamedTextColor.GREEN));
                 recordWipeAndScheduleNext(name);
             });
         });

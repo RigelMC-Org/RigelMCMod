@@ -38,6 +38,17 @@ dependencies {
     compileOnly(libs.worldedit.bukkit) { isTransitive = false }
     compileOnly(libs.worldedit.core) { isTransitive = false }
 
+    // EssentialsX is a hard requirement for this project (unlike everything else
+    // compileOnly above/below, all soft/optional) - compiled directly against for
+    // world.EssentialsWarpBridge's small, stable warp-removal API surface. See
+    // gradle/libs.versions.toml's comment on this entry. isTransitive = false for the
+    // same reason as worldedit-bukkit/worldedit-core above: EssentialsX's own POM pulls
+    // in an old pinned org.spigotmc:spigot-api that conflicts with (and is unnecessary
+    // next to) our own paper-api - the actual installed Essentials plugin jar already
+    // provides everything it needs at runtime, a compileOnly consumer only needs
+    // EssentialsX's own classes to compile against.
+    compileOnly(libs.essentialsx) { isTransitive = false }
+
     testImplementation(libs.paper.api)
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.hikaricp)

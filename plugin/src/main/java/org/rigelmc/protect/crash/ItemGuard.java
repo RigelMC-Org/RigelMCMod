@@ -13,6 +13,8 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.BannerMeta;
@@ -27,6 +29,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.rigelmc.RigelMCMod;
 import org.rigelmc.core.RigelConfig;
+import org.rigelmc.protect.antigrief.PerPlayerRateLimiter;
 import org.rigelmc.rank.PermissionGate;
 
 /**
@@ -38,6 +41,17 @@ import org.rigelmc.rank.PermissionGate;
  * or bundle-in-bundle - the classic recursive-open crash vector). Moderator+ are exempt -
  * staff are trusted to build special-purpose items without getting flagged.
  *
+ * <p><b>"Decimator" exploit</b> (user-reported): a crafted item, often with bloated/
+ * anomalous metadata, rapid-fired between main hand and offhand via a client-side script -
+ * each swap forces the server to broadcast an equipment-sync packet containing the full
+ * item to every nearby observer, so a fast enough swap rate overloads the packet-processing
+ * thread regardless of whether the item's content alone would trip the checks above.
+ * {@link #onSwapHands} closes this two ways: it runs the exact same {@link #isCursed}
+ * check this guard already applies everywhere else (a gap before this - swapping hands
+ * doesn't fire {@link InventoryClickEvent}/{@link InventoryDragEvent} at all), and
+ * independently rate-limits the swap itself via {@link PerPlayerRateLimiter}, so even a
+ * "clean" item can't be swapped fast enough to matter.</p>
+ *
  * <p>Reads {@code plugin.rigelConfig()} fresh on every event rather than caching a
  * reference - see {@code protect.antigrief.AntiNukeGuard}'s javadoc for why.</p>
  */
@@ -45,6 +59,7 @@ public final class ItemGuard implements Listener {
 
     private final RigelMCMod plugin;
     private final PermissionGate permissionGate;
+    private final PerPlayerRateLimiter handSwaps = new PerPlayerRateLimiter(1_000);
 
     public ItemGuard(@NotNull RigelMCMod plugin, @NotNull PermissionGate permissionGate) {
         this.plugin = plugin;
@@ -108,6 +123,33 @@ public final class ItemGuard implements Listener {
                     .warning("Removed one or more items exceeding safety limits from " + player.getName()
                             + "'s inventory on join.");
         }
+    }
+
+    /** See this class's own javadoc for the "Decimator" exploit this specifically defends against. */
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onSwapHands(@NotNull PlayerSwapHandItemsEvent event) {
+        Player player = event.getPlayer();
+        if (isExempt(player)) {
+            return;
+        }
+        if (isCursed(event.getMainHandItem()) || isCursed(event.getOffHandItem())) {
+            event.setCancelled(true);
+            warn(player);
+            return;
+        }
+        int maxPerSecond = plugin.rigelConfig().crashItemMaxHandSwapsPerSecond();
+        if (maxPerSecond <= 0) {
+            return;
+        }
+        int count = handSwaps.recordAndCount(player.getUniqueId(), System.currentTimeMillis());
+        if (count > maxPerSecond) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onQuit(@NotNull PlayerQuitEvent event) {
+        handSwaps.clear(event.getPlayer().getUniqueId());
     }
 
     private boolean isExempt(Player player) {

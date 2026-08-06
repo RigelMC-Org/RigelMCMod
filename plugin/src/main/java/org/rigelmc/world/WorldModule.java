@@ -149,27 +149,43 @@ public final class WorldModule implements PluginModule {
     }
 
     /**
-     * Console/RCON-only, matching TFM's own real {@code Command_wipeflatlands} exactly
-     * ({@code SourceType.ONLY_CONSOLE}) - deliberate, not an oversight: when {@code
-     * world.flatlands.wipe-requires-restart} is on (the default), this command shuts the
-     * whole server down as part of the wipe (see {@code FlatlandsService}'s javadoc), so
-     * an in-game sender would immediately kick themselves with little warning.
+     * Gating depends on {@link RigelConfig#flatlandsWipeRequiresRestart} - read fresh on
+     * every invocation, not cached, so a {@code /rmcm reload} takes effect immediately.
      *
-     * <p>Deliberately no top-level {@code .requires()} gate - a failed {@code .requires()}
-     * hides the whole node from Brigadier's parser, surfacing to a player as a confusing
-     * raw "Unknown or incomplete command" instead of a clear rejection message (the same
-     * class of issue {@code rmcm.RmcmModule}/{@code rank.RankAdminModule}'s own javadoc
-     * already documents and fixes the same way). The console-only check happens inside
-     * the execute body instead.</p>
+     * <p>When {@code true}: console/RCON-only, matching TFM's own real {@code
+     * Command_wipeflatlands} exactly ({@code SourceType.ONLY_CONSOLE}) - deliberate, not
+     * an oversight, since this mode shuts the whole server down as part of the wipe (see
+     * {@code FlatlandsService}'s javadoc), and an in-game sender would immediately kick
+     * themselves with little warning.</p>
+     *
+     * <p>When {@code false} (the default - see {@code RigelConfig}'s javadoc for why):
+     * no shutdown happens at all, so there's no reason to force console/RCON - usable
+     * in-game too, gated to Senior Admin+ (matching TFM's own permission tier for this
+     * command) same as every other Senior-Admin-only command in this class.</p>
+     *
+     * <p>Deliberately no top-level {@code .requires()} gate for either check - a failed
+     * {@code .requires()} hides the whole node from Brigadier's parser, surfacing to a
+     * player as a confusing raw "Unknown or incomplete command" instead of a clear
+     * rejection message (the same class of issue {@code rmcm.RmcmModule}/{@code
+     * rank.RankAdminModule}'s own javadoc already documents and fixes the same way).
+     * Both checks happen inside the execute body instead.</p>
      */
     private LiteralCommandNode<CommandSourceStack> wipeFlatlandsCommand() {
         return Commands.literal("wipeflatlands")
                 .executes(ctx -> {
                     CommandSender sender = ctx.getSource().getSender();
-                    if (sender instanceof Player) {
+                    boolean requiresRestart = plugin.rigelConfig().flatlandsWipeRequiresRestart();
+                    if (requiresRestart && sender instanceof Player) {
                         sender.sendMessage(Component.text(
-                                "/wipeflatlands can only be run from the server console or RCON, not in-game.",
+                                "/wipeflatlands can only be run from the server console or RCON while"
+                                        + " world.flatlands.wipe-requires-restart is enabled - it shuts the"
+                                        + " whole server down as part of the wipe.",
                                 NamedTextColor.RED));
+                        return 0;
+                    }
+                    if (!requiresRestart && !hasRank(ctx.getSource(), "senior_admin")) {
+                        sender.sendMessage(Component.text(
+                                "You don't have permission to use /wipeflatlands.", NamedTextColor.RED));
                         return 0;
                     }
                     sender.sendMessage(Component.text("Wiping the flatlands world now...", NamedTextColor.GOLD));
@@ -184,6 +200,12 @@ public final class WorldModule implements PluginModule {
                 .requires(source -> source.getSender() instanceof Player)
                 .executes(ctx -> {
                     Player player = (Player) ctx.getSource().getSender();
+                    if (flatlandsService.isWipeInProgress()) {
+                        player.sendMessage(Component.text(
+                                "The flatlands world is currently being wiped - try again in a few seconds.",
+                                NamedTextColor.YELLOW));
+                        return 0;
+                    }
                     World world = Bukkit.getWorld(plugin.rigelConfig().flatlandsWorldName());
                     if (world == null) {
                         player.sendMessage(Component.text("The flatlands world isn't ready yet.", NamedTextColor.RED));

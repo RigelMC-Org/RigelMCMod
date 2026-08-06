@@ -19,6 +19,12 @@ packetevents = "2.12.1"
 # WorldEdit API dependency the presence-detection-only protect.worldedit.WorldEditBridge
 # explicitly deferred needing.
 worldedit = "7.3.10"
+# Compile-only - EssentialsX is a hard requirement for this project (not a soft dependency
+# like everything else above/below), but the Java API surface used against it
+# (world.EssentialsWarpBridge) is small and stable, so this compiles directly against it
+# rather than reflection. From 2.19.0 onward EssentialsX publishes under the
+# net.essentialsx group id (previously net.ess3) - see repo.essentialsx.net.
+essentialsx = "2.19.6"
 junit-jupiter = "6.1.2"
 shadow = "9.6.1"
 run-paper = "3.0.2"
@@ -34,6 +40,7 @@ discord4j = { module = "com.discord4j:discord4j-core", version.ref = "discord4j"
 packetevents = { module = "com.github.retrooper:packetevents-spigot", version.ref = "packetevents" }
 worldedit-bukkit = { module = "com.sk89q.worldedit:worldedit-bukkit", version.ref = "worldedit" }
 worldedit-core = { module = "com.sk89q.worldedit:worldedit-core", version.ref = "worldedit" }
+essentialsx = { module = "net.essentialsx:EssentialsX", version.ref = "essentialsx" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
 
 [plugins]

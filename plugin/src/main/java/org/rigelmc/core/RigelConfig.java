@@ -453,6 +453,18 @@ public final class RigelConfig {
         return source.getInt("protect.crash.items.max-banner-patterns", 256);
     }
 
+    /**
+     * @return max {@code PlayerSwapHandItemsEvent}s per second before further ones are
+     *     cancelled outright - see {@code protect.crash.ItemGuard}'s javadoc for the
+     *     "Decimator"-style exploit (a crafted/bloated item rapid-fired between main hand
+     *     and offhand to flood every nearby observer with expensive equipment-sync
+     *     packets) this specifically defends against, independent of the item's own
+     *     content passing every other check above. 0/negative disables the check.
+     */
+    public int crashItemMaxHandSwapsPerSecond() {
+        return source.getInt("protect.crash.items.max-hand-swaps-per-second", 6);
+    }
+
     public boolean crashEntityGuardEnabled() {
         return source.getBoolean("protect.crash.entities.enabled", true);
     }
@@ -744,20 +756,27 @@ public final class RigelConfig {
      *     deleting/recreating the world in-place while the server keeps running. Deleting a
      *     world folder while other worlds in the same JVM are still loaded has no OS-level
      *     guarantee every file handle has actually been released (observed unreliable on
-     *     some setups); this instead marks the wipe pending and shuts down, deleting the
-     *     folder on the next boot before any world is loaded at all - the only way to make
-     *     the delete itself fully reliable. Deliberately a {@code shutdown()}, not a {@code
-     *     restart()} - see {@code world.FlatlandsService}'s own javadoc for why trusting
-     *     {@code restart()} to actually relaunch the process was a real, user-reported bug,
-     *     not a hypothetical one; matches TFM's own real {@code Command_wipeflatlands}
-     *     exactly, which requires the operator (or their process supervisor) to bring the
-     *     server back up themselves. Defaults to {@code true} since a reliable wipe was the
-     *     explicit ask; set to {@code false} to go back to the lower-disruption in-place
-     *     behavior (only the flatlands world's own players are affected, no shutdown at
-     *     all) if the downtime isn't wanted.
+     *     some setups); the restart-based path instead marks the wipe pending and shuts
+     *     down, deleting the folder on the next boot before any world is loaded at all - the
+     *     only way to make the delete itself fully reliable. Deliberately a {@code
+     *     shutdown()}, not a {@code restart()} - see {@code world.FlatlandsService}'s own
+     *     javadoc for why trusting {@code restart()} to actually relaunch the process was a
+     *     real, user-reported bug, not a hypothetical one; matches TFM's own real {@code
+     *     Command_wipeflatlands} exactly, which requires the operator (or their process
+     *     supervisor) to bring the server back up themselves.
+     *
+     *     <p>Defaults to {@code false} (in-place, no shutdown) - a user-reported real-world
+     *     failure mode of the restart-based path: most container/panel setups (Pterodactyl
+     *     confirmed directly) only auto-restart on an <i>unexpected</i> exit (a crash), not
+     *     on the graceful, intentional exit code {@code shutdown()} produces, so the
+     *     restart-based wipe would correctly complete its own job and then simply never come
+     *     back up - indistinguishable from "the command doesn't work" to whoever ran it. Set
+     *     to {@code true} to opt into the restart-based path (matching TFM exactly, console/
+     *     RCON-only - see {@code world.WorldModule#wipeFlatlandsCommand}) if your setup's
+     *     process supervisor is confirmed to bring the server back up after a clean exit.</p>
      */
     public boolean flatlandsWipeRequiresRestart() {
-        return source.getBoolean("world.flatlands.wipe-requires-restart", true);
+        return source.getBoolean("world.flatlands.wipe-requires-restart", false);
     }
 
     @NotNull

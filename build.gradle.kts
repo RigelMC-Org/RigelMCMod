@@ -12,6 +12,7 @@ allprojects {
         maven("https://repo.papermc.io/repository/maven-public/") // Paper API
         maven("https://repo.codemc.io/repository/maven-public/") // PacketEvents - compileOnly, see protect.crash.packet
         maven("https://maven.enginehub.org/repo/") // WorldEdit - compileOnly, see protect.worldedit.extent
+        maven("https://repo.essentialsx.net/releases/") // EssentialsX - compileOnly, see world.EssentialsWarpBridge
     }
 }
 

@@ -468,6 +468,14 @@ protect:
       max-potion-effects: 24
       max-firework-explosions: 64
       max-banner-patterns: 256
+      # Caps how many times per second a player can swap items between their main hand
+      # and offhand - closes the "Decimator" exploit: a crafted item (often with bloated
+      # NBT) rapid-fired between hands via a client-side script, forcing the server to
+      # broadcast an expensive equipment-sync packet to every nearby observer on each
+      # swap and overload the packet-processing thread. Applies regardless of whether the
+      # item itself trips the checks above - sheer swap frequency is the attack on its
+      # own. 0/negative disables the check.
+      max-hand-swaps-per-second: 6
     entities:
       enabled: true
       # A custom mob/item-frame name far past this is stripped (not the entity itself -
@@ -703,17 +711,23 @@ world:
       warning-minutes-before: 5
     # Whether a wipe (manual /wipeflatlands or an automatic autowipe) shuts the whole
     # server down as part of wiping, rather than deleting/recreating the world in-place
-    # while the server keeps running. A shutdown guarantees the delete itself is reliable
-    # (no world-folder file handles can still be held by the old process once it's
-    # actually exited) at the cost of disconnecting every player on the server, not just
-    # those in the flatlands world - matching TFM's own real /wipeflatlands, this
-    # deliberately shuts the server down rather than trying to restart it, since a
-    # restart can only actually relaunch the process on setups with a wrapper/script that
-    # specifically supports it; whatever normally brings your server back up (a process
-    # supervisor, a panel, or you typing the start command again) is what does so here
-    # too, and the actual wipe happens automatically the moment it does. Set to false for
-    # the lower-disruption in-place behavior instead (no shutdown at all).
-    wipe-requires-restart: true
+    # while the server keeps running (a few seconds, only flatlands' own players
+    # affected). A shutdown guarantees the delete itself is reliable (no world-folder
+    # file handles can still be held by the old process once it's actually exited) -
+    # matching TFM's own real /wipeflatlands, it deliberately shuts the server down
+    # rather than trying to restart it in-process, since a restart can only actually
+    # relaunch the process on setups with a wrapper/script that specifically supports it.
+    #
+    # Default false: most container/panel setups (Pterodactyl confirmed) only
+    # auto-restart on an *unexpected* exit (a crash) - a graceful shutdown like this one
+    # is treated as an intentional stop and nothing brings the server back up, so the
+    # wipe silently never completes from the operator's point of view even though the
+    # command itself worked correctly. Only set this to true if you've confirmed your
+    # own setup's process supervisor restarts after a clean/graceful stop, not just a
+    # crash - it switches /wipeflatlands to console/RCON-only, matching TFM exactly
+    # (see world.WorldModule#wipeFlatlandsCommand); with it false, /wipeflatlands is
+    # also usable in-game by Senior Admin+.
+    wipe-requires-restart: false
   spawn:
     # The actual spawn coordinates are NOT set here - run /setspawn (Senior Admin+) in
     # game to set/move it. They're stored in the database instead, like every other

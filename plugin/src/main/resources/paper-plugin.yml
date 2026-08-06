@@ -24,10 +24,18 @@ api-version: '26.1'
 
 dependencies:
   server:
+    # join-classpath: true (unlike every other soft-detected entry below it) because
+    # world.EssentialsWarpBridge compiles directly against Essentials' own classes
+    # (compileOnly, see plugin/build.gradle.kts) rather than reflection - this plugin's
+    # own classloader needs to actually resolve com.earth2me.essentials.*/net.ess3.api.*
+    # at runtime. required: false stays false even though EssentialsX is a hard
+    # requirement at the "server won't be fully usable without it" level (see README) -
+    # RigelMCMod's own commands still function without it; only flatlands-wipe warp
+    # cleanup silently no-ops if it's absent (see EssentialsWarpBridge's javadoc).
     Essentials:
       load: BEFORE
       required: false
-      join-classpath: false
+      join-classpath: true
     LuckPerms:
       load: BEFORE
       required: false

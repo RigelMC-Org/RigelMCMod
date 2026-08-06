@@ -15,13 +15,21 @@ Original author: **LightWarp**.
 
 ## Status
 
-Phase 1 (Core) in progress — rank/title ladder, permission fallback, and the ban system
-(`/ban`, `/tban`, `/permban` cascade, `/punish unban`/`mute`/`unmute`), tiered command
-access control, `/o` admin chat, and audit logging are implemented and tested. See
-`docs/architecture.md` for the full roadmap. Not yet feature complete or ready for
-production use — anti-nuke, world tools, rollback (CoreProtect bridge exists but is
-unverified against a live server), disguises, skins, and the Discord bridge are still
-ahead.
+Feature-complete through Sub-phase F1 and running on a live, mixed Java/Bedrock/Eaglercraft
+server. Implemented: the rank/title ladder with permission fallback; the ban system
+(`/ban`, `/tban`, `/permban` cascade, `/unban`, chat mute, audit log); tiered command
+access control; the anti-grief core (anti-nuke, anti-spam, freeze including hard-freeze,
+movement validator, command-spy/`/bookspy`); event- and packet-level crash-exploit guards
+(`protect/crash/`, TFM-parity "E1"/"E2" tiers); `WorldEditBridge`
+(FAWE/WorldEdit/naive-fallback) with `/protectarea`, `/cage`, and a CoreProtect rollback
+bridge; admin worlds with a guest system; the flatlands sandbox (CleanroomGenerator-backed
+for Eaglercraft/1.8-protocol compatibility, in-place wipe/autowipe by default with an
+opt-in restart-based mode, EssentialsX warp cleanup on wipe); disguise and skin bridges;
+the Discord bridge (Discord4J, account linking, rank-gated console-via-Discord);
+and a read-only web dashboard. See `docs/architecture.md` for the full roadmap — the one
+remaining tracked item is Sub-phase F2 (`fun/`: jump pads, landmines, novelty guns,
+particle trails, novelty/troll commands), not yet built. Still under active hardening as
+issues surface from real-world use.
 
 ## Requirements
 
@@ -45,8 +53,10 @@ none are required to run):
 | [CoreProtect](https://www.spigotmc.org/resources/coreprotect.8631/) | `/punish rollback`, and the automatic rollback triggered by `/ban` |
 | [LibsDisguises](https://www.spigotmc.org/resources/libs-disguises-free.81/) | `/disguise` |
 | [SkinsRestorer](https://skinsrestorer.net/) | `/skin` |
-| [WorldGuard](https://enginehub.org/worldguard) / [FastAsyncWorldEdit](https://www.spigotmc.org/resources/fastasyncworldedit.13932/) | Admin-defined protected zones; fast bulk block operations for cage build/restore, cleanroom world generation, world resets |
+| [WorldGuard](https://enginehub.org/worldguard) / [FastAsyncWorldEdit](https://www.spigotmc.org/resources/fastasyncworldedit.13932/) | Admin-defined protected zones; fast bulk block operations for cage build/restore, world resets |
 | [Floodgate](https://geysermc.org/) | Detecting Bedrock players bridged in via GeyserMC |
+| [CleanroomGenerator](https://github.com/nvx/CleanroomGenerator) | Legacy (y=0-start) flatlands generation so Eaglercraft/1.8-protocol clients can see the sandbox world; falls back to vanilla `WorldType.FLAT` if absent |
+| [PacketEvents](https://github.com/retrooper/packetevents) | Packet-level ("E2") crash-exploit guards — inbound chat/command/movement rate limiting, outbound entity-metadata sanitization; event-level ("E1") guards work without it |
 
 ## Network topology note (important setup step)
 
@@ -105,7 +115,7 @@ after your first boot:
 | `/mute <player> [reason]` / `/unmute <player>` | TFM's `/stfu`: quick, always-public, fixed 5-minute **toggle**-mute (running it again unmutes early). Deliberately, unconditionally shadows Essentials' own `/mute` — not gated behind `aliases.enable-shadowing` |
 | `/o <message>` | Staff-only broadcast — in-game, plus the Discord admin channel if the bridge is connected |
 | `/discord link` / `/discord unlink` | Link/unlink your Discord account (finish by running `/link code:CODE` as a Discord slash command, in a DM to the bot) |
-| `/wipeflatlands` | Immediately wipe and regenerate the flatlands sandbox world |
+| `/wipeflatlands` | Immediately wipe and regenerate the flatlands sandbox world (in-place by default - Senior Admin+, in-game or console; console/RCON-only if `world.flatlands.wipe-requires-restart: true`). Also removes any EssentialsX `/warp` left pointing into it |
 | `/announce <message>` | One-off server-wide broadcast, MiniMessage-formatted (colors, gradients, etc.) |
 | `/rvanish` | Vanish, hidden from regular players *and* non-staff auto-op'd players (Moderator+) |
 | `/op [player]` / `/opall` / `/deop <player>` / `/deopall` | `/op` is open to everyone (self or another online player) — vanilla op status carries no RigelMCMod rank of its own. `/opall`/`/deop`/`/deopall` are Moderator+ |
