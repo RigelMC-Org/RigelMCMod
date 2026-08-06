@@ -101,6 +101,76 @@ public final class RankAdminModule implements PluginModule {
     @Override
     public void registerListeners(RigelMCMod plugin) {
         this.plugin = plugin;
+        Bukkit.getScheduler().runTaskTimer(
+                plugin, this::reconcilePermissionCache,
+                PERMISSION_SELF_HEAL_INTERVAL_TICKS, PERMISSION_SELF_HEAL_INTERVAL_TICKS);
+    }
+
+    /**
+     * Also runs one immediate reconciliation pass on {@code /rmcm reload}, rather than
+     * leaving an admin to wait out the periodic interval - matches the real workflow a
+     * user actually reached for when this cache went stale (they tried {@code /rmcm
+     * reload} first, before the console-only {@code /adminconfig setrank} workaround); see
+     * {@link #reconcilePermissionCache}'s own javadoc for why the cache can go stale in
+     * the first place.
+     */
+    @Override
+    public void onConfigReload(org.rigelmc.core.RigelConfig config) {
+        reconcilePermissionCache();
+    }
+
+    /** How often {@link #reconcilePermissionCache} re-checks every online player - 20 ticks/sec x 60. */
+    private static final long PERMISSION_SELF_HEAL_INTERVAL_TICKS = 1200L;
+
+    /**
+     * Self-heal for {@link PermissionGate}'s online-rank cache - defense-in-depth against
+     * the join-time population ({@code core.PlayerLoginListener#onJoin}'s async DB
+     * round-trip, then a hop back to the main thread to call {@link
+     * PermissionGate#applyRank}) ever silently failing partway through for a given player,
+     * leaving their cache entry missing or stale for the rest of their session with no
+     * other trigger to fix it. Runs periodically (see {@link #registerListeners}) and also
+     * immediately on {@code /rmcm reload} (see {@link #onConfigReload}).
+     *
+     * <p>Real, user-reported symptom this closes: an admin's rank-gated commands (e.g.
+     * {@code /ban}, {@code /adminworld}) went completely invisible after a restart - "Unknown
+     * or incomplete command," since a failed Brigadier {@code .requires()} hides the whole
+     * command node rather than denying with a message - and the only known fix was a
+     * console-run {@code /adminconfig setrank} re-populating that exact same cache manually
+     * (see {@link #executeSetRank}'s own {@code permissionGate.applyRank} call). This makes
+     * that self-correct automatically instead of needing an admin to notice, diagnose, and
+     * manually intervene every time.</p>
+     *
+     * <p>Cheap in the overwhelmingly common case: only re-applies (which clears and re-
+     * grants every permission node, so isn't free) when the freshly-fetched DB rank
+     * actually disagrees with - or is entirely missing from - the cache; otherwise this is
+     * one DB read per online player per call and nothing else.</p>
+     */
+    private void reconcilePermissionCache() {
+        List<Player> online = List.copyOf(Bukkit.getOnlinePlayers());
+        if (online.isEmpty()) {
+            return;
+        }
+        dbExecutor.submit(() -> {
+            for (Player player : online) {
+                UUID uuid = player.getUniqueId();
+                try {
+                    String actualRankId = rankService.rankOf(uuid).id();
+                    if (actualRankId.equals(permissionGate.cachedRankId(uuid))) {
+                        continue; // already correct - the common case
+                    }
+                    Bukkit.getScheduler().runTask(plugin, () -> {
+                        Player stillOnline = Bukkit.getPlayer(uuid);
+                        if (stillOnline != null) {
+                            permissionGate.applyRank(stillOnline, actualRankId);
+                            stillOnline.updateCommands();
+                        }
+                    });
+                } catch (SQLException e) {
+                    plugin.getLogger().log(
+                            Level.WARNING, "Permission cache self-heal failed for " + player.getName(), e);
+                }
+            }
+        });
     }
 
     @Override

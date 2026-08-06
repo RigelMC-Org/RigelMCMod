@@ -8,6 +8,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.permissions.PermissionAttachment;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * The permission fallback mechanism described in docs/architecture.md: every player gets
@@ -158,6 +159,18 @@ public final class PermissionGate {
         int requiredWeight =
                 rankService.rank(requiredRankId).map(Rank::weight).orElse(Integer.MAX_VALUE);
         return currentWeight >= requiredWeight;
+    }
+
+    /**
+     * @return the rank id currently cached for this online player, or {@code null} if
+     *     nothing is cached for them at all (as opposed to being cached as {@code
+     *     "default"}) - lets a caller distinguish "never populated" from "populated as
+     *     unranked" without needing a {@code hasAtLeastCached} probe per rank tier. See
+     *     {@code RankAdminModule}'s periodic cache self-heal for the actual consumer.
+     */
+    @Nullable
+    public String cachedRankId(@NotNull UUID uuid) {
+        return onlineRankCache.get(uuid);
     }
 
     @NotNull

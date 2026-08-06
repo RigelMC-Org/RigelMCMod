@@ -174,7 +174,17 @@ public final class PlayerLoginListener implements Listener {
                         announceJoin(stillOnline, loginMessage);
                     }
                 });
-            } catch (SQLException e) {
+            } catch (SQLException | RuntimeException e) {
+                // Deliberately broader than just SQLException: this whole block runs
+                // inside dbExecutor.submit(Runnable), and ExecutorService silently
+                // discards any exception an unretrieved Future's task throws - a bug
+                // anywhere in this chain (not just a DB failure) would otherwise vanish
+                // with zero log trace, leaving this player's PermissionGate cache entry
+                // (and everything gated on it - every rank-gated command) permanently
+                // unpopulated for their whole session with no diagnostic trail at all.
+                // rank.RankAdminModule's periodic cache self-heal is the safety net that
+                // eventually corrects the missing cache entry regardless; this log line
+                // is what actually makes the root cause diagnosable if it ever fires.
                 plugin.getLogger().log(Level.WARNING, "Failed to process login data for " + name, e);
             }
         });
