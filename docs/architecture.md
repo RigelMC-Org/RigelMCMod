@@ -1,0 +1,351 @@
+# RigelMCMod — a modern, better-architected TotalFreedomMod-alike for Paper 26.2
+
+## Context
+
+TotalFreedomMod (TFM) is the plugin that powers "Free OP" servers — every player is granted operator, and the plugin's job is to make that survivable: admin ranks, anti-grief/anti-nuke primitives, punishment tools (ban/freeze/cage), world resets, and grief rollback. The user wants that feature set recreated as a **brand-new OSS plugin** — not a fork, no TFM code reused — that is better architected, better optimized, and designed to run cleanly alongside **EssentialsX** on a Free OP server, targeting **PaperMC for Minecraft 26.2** (the June 2026 "Chaos Cubed" drop, first release under Mojang's new `year.drop.hotfix` versioning).
+
+Research into TFM's current state surfaced concrete reasons a rewrite is warranted, not just a preference:
+- TFM's own maintainers now flag it **unmaintained with critical, on-by-default vulnerabilities in its embedded HTTPD feature** — "do not use binaries from this repo in production."
+- A buggy **username-keyed** (not UUID-first) data model failed to preserve player data across name changes and was later ripped out.
+- `/permban list` threw an uncaught `IndexOutOfBoundsException` and crashed the invoking player — a symptom of no automated test coverage.
+- Plugin-load failures from a hard, fragile third-party dependency (`NoClassDefFoundError` on AeroPlugin) and API-version mismatches.
+- A documented, real interop bug: **Essentials silently steals commands from TFM** (e.g. `/list`) due to naive command registration — this is the exact interop problem the new plugin must solve by design, since it must coexist with Essentials.
+
+`D:\Programming\RigelMCMod` is currently empty — this is a greenfield build, not a migration.
+
+Beyond raw feature parity, the user also wants the plugin to lean on the established, actively-maintained plugins that already do specific jobs well — disguises, skins, grief rollback/logging, and fast bulk world edits — rather than reinventing them, both to reduce maintenance burden and because those tools are genuinely better-optimized at their specific job than a bespoke implementation would be. All of the following were confirmed actively maintained and Paper-26.2-compatible during planning: **LibsDisguises** (26.1–26.1.2 support confirmed, actively maintained), **CoreProtect** (public rollback/restore/lookup API through v11), **FastAsyncWorldEdit + WorldGuard** (both IntellectualSites, confirmed working together on 26.2, WorldGuard regions respected during FAWE edits), **SkinsRestorer** (public API, active 26.x releases).
+
+## Confirmed decisions
+
+- **Name:** RigelMCMod
+- **Language:** Java
+- **License:** ~~AGPL-3.0~~ **superseded** — see [`LICENSE`](../LICENSE): a custom RigelMCMod License (source-available, not OSI-approved). Source-only redistribution, and commercial rights reserved to RigelMC/Throwdown Media LLP; see `README.md`'s License section for the summary.
+- **Storage:** SQLite by default (via HikariCP), optional MySQL/MariaDB for networks wanting shared cross-server data
+- **Package/group:** `org.rigelmc`
+- **Target:** PaperMC 26.2 (primary dev target), **also supporting 26.1.2** — `paper-plugin.yml` declares `api-version: '26.1'` as a minimum-version floor, not a pin, so both server versions can load the plugin; `paper-plugin.yml` format either way, **JDK 25** toolchain, Brigadier command registration via `LifecycleEvents.COMMANDS` (not legacy `plugin.yml` commands block). Caveat: compiled against the 26.2 API, so new code must stick to API surface that also exists on 26.1.2 — nothing enforces this automatically yet, it's a manual discipline point until/unless a 26.1.2 CI matrix job is added.
+- **Must coexist with EssentialsX** (tracks Paper 26.1.2/26.2, v2.22.0+) on the same Free-OP server without command/feature collisions
+- Folia is confirmed a **separate fork**, not merged into mainline Paper as of 26.2 — target standard Paper only, standard Bukkit scheduler, no region-aware scheduling needed
+
+## Network topology & multi-client identity
+
+Confirmed: **single backend Paper server behind a Velocity proxy**, with **GeyserMC/Floodgate** bridging Bedrock clients and an Eaglercraft-compatible proxy plugin (e.g. EaglerXVelocity) bridging browser/cracked clients; proxy-side auth (the user's own "veloauth"-style plugin) already handles pre-login validation on Velocity. **RigelMCMod stays backend-only** — no Velocity-side companion module, no cross-server data sync (SQLite-default remains the right call, per the original storage decision).
+
+This still changes the backend design in concrete ways, because the plugin now sees three distinct player-identity types instead of one:
+
+- **Premium Java** — real Mojang UUID.
+- **Bedrock (via Floodgate)** — a Floodgate-namespaced UUID, not a real Mojang account.
+- **Offline/Eaglercraft** — a UUID derived from username (`UUID.nameUUIDFromBytes`), which is **trivially regenerated by picking a new username** — this is a real ban-evasion vector, not a theoretical one.
+
+Concrete design responses:
+- `identity/PlayerIdentity` + `identity/IdentityService` — resolves each joining player's type (`JAVA` / `BEDROCK` / `OFFLINE`) via Floodgate's API if present (`compileOnly`, added as another `server` soft-dependency in `paper-plugin.yml`, `load: BEFORE`), else falls back to inferring from the server's online-mode setting. Consumed by the ban system, movement validator, and skin module.
+- **Ban enforcement is IP-primary for non-premium identities, not UUID-primary.** `rigel_bans` and `rigel_players` already carry `target_ip_hash`/`last_ip_hash` (original schema) — the design decision made explicit here is that for `BEDROCK`/`OFFLINE` identities the ban UI/docs push admins toward IP bans by default (`/punish banip`), since a name-based or UUID-based ban on an Eaglercraft player is bypassed the moment they pick a new username. Premium Java UUID bans remain reliable since that identity can't be regenerated.
+- `rigel_players` gains an `identity_type` column so admin tooling (`/whois`, audit log) always shows which kind of identity a ban/rank/punishment applied to.
+- **Operational prerequisite, not optional**: the backend Paper server must have Velocity's modern IP-forwarding correctly enabled and secret-matched (`paper-global.yml: proxies.velocity.enabled` + matching secret) — without it, every player (not just Eaglercraft ones) appears to originate from the proxy's own IP to `AsyncPlayerPreLoginEvent`, silently breaking IP bans and anti-nuke correlation for the entire server. This goes in `README.md`/`docs/` as a prominent setup-checklist item, since it's an easy, high-impact thing to miss.
+- **Skin module awareness**: `/skin` detects `BEDROCK` identity via `IdentityService` and declines with an explanatory message instead of attempting a Java-style texture swap that Geyser can't render back to the Bedrock client correctly — Bedrock players' skins are owned by their Bedrock account/Geyser config, not by us.
+- **Movement validator awareness**: Bedrock/Eaglercraft clients have different movement/physics fidelity than vanilla Java; per-identity-type tolerance thresholds (configurable) reduce false positives, on top of the existing alert-only-by-default posture.
+- Login gate (`gate/LoginGateListener`) must not apply any online-mode-style re-validation that would reject already-proxy-authenticated Bedrock/Eaglercraft sessions — it trusts Velocity/Floodgate/the proxy-side auth plugin for authentication and only handles RigelMCMod-specific gating (e.g. ban checks), not identity verification.
+
+## Ban system: /ban, /tban, /permban cascade, flags, web panel
+
+Researching TFM's actual current ban implementation for accuracy turned up a mismatch worth noting: TFM's live `/tempban` defaults to a 30-minute duration with no rollback/IP/silent support, and its `/permban` command in current master is **only a "reload the ban list from disk" admin command**, not a ban-issuing command — actual ban issuance lives elsewhere (likely GUI-driven). So the design below is **inspired by TFM's concepts and its `Ban.java` data model** (a ban record bundling one username with a *list* of associated IPs, permanent-vs-expiring via a nullable expiry, `by`/`reason` fields) rather than a literal port of current TFM command behavior, per the user's explicit new requirements:
+
+- **`/ban <player> [reason]`** — quick-ban, fixed 24-hour duration, **always** triggers an automatic CoreProtect rollback of the target's recent changes (config-defined lookback window, default e.g. 1 hour) — mandatory, not a flag.
+- **`/tban <player> <duration> [reason] [flags]`** (aliased `/tempban` for muscle memory) — explicit-duration temp ban; rollback is **opt-in** via `-r`/`--rollback`, unlike `/ban`.
+- **`/permban <player-name|ip-address> [reason] [flags]`** — permanent ban with **cascading identity resolution**, the concrete anti-evasion mechanism promised in the Network-topology section above:
+  - Given a name: resolve to a UUID, look up **every IP that UUID has ever connected from** (new `rigel_ip_history` table, not just last-known), and permban the name plus all of those IPs together as one linked case.
+  - Given an IP: look up **every username that has ever connected from that IP**, and permban the IP plus all of those names together as one linked case.
+  - All rows from one cascade share a `case_id` so `/punish unban` can act on the whole case or a single entry (`-c`/`--case` flag to affect the whole case; default is single-entry, so unbanning one shared-IP housemate doesn't silently lift everyone).
+- **Flags** (`command/CommandFlags`, shared across punishment commands): `-s`/`--silent` (suppress public broadcast, still staff-logged + audited), `-r`/`--rollback`, `-c`/`--case`. Exact legacy TFM flag letters could not be verified from source in this session (TFM's `/tempban` implementation examined has no flags at all) — treat this set as a clean baseline "in the spirit of" TFM rather than a confirmed byte-for-byte match; revisit if literal parity turns out to matter to the user.
+- **`rigel_ip_history(uuid, ip_hash, first_seen_at, last_seen_at)`**, PK `(uuid, ip_hash)`, indexed on `ip_hash` — populated on every login, replacing the earlier plan's single last-known-IP field with full history, since the cascade lookups need both directions (uuid→ips and ip_hash→uuids).
+- `rigel_bans` gains a nullable `case_id` for cascade grouping, on top of the existing `type`/`target_uuid`/`target_ip_hash`/`expires_at` fields.
+
+**Web panel** — the user wants a read-only dashboard (stats, bans, permban cascades) on a separate port, mirroring a real TFM feature (its "Permban HTTPD Module," which TFM's own issue tracker literally proposed restricting to admins-only). This is the same feature *category* as TFM's on-by-default, unauthenticated, exploitable HTTPD — the headline reason a rewrite was justified in the first place — so it needs to be designed to resolve that tension explicitly, not reintroduce it:
+- New `webpanel/` module, **off by default** (`webpanel.enabled: false`).
+- Separate port from the game (`webpanel.port`), **binds to `127.0.0.1` by default** — operators must deliberately reconfigure to `0.0.0.0` to expose it beyond localhost, nudging toward fronting it with their own reverse proxy/TLS/VPN rather than exposing it raw.
+- **Read-only in v1**: live stats, active bans, permban cascade cases — no ban/unban mutation endpoints yet; that's a deliberate scope cut versus TFM, revisit later behind stronger auth if ever needed.
+- **Token-authenticated** (a generated bearer token surfaced in console/config on first run — never ships open), rate-limited, built on a minimal embedded HTTP server added via the same `MavenLibraryResolver` loader pattern as HikariCP (e.g. Javalin or NanoHTTPD) rather than hand-rolled socket parsing, to avoid reintroducing the class of bug that made TFM's httpd exploitable.
+- Documented prominently in README as opt-in and read-only, with a "put it behind a reverse proxy if exposing beyond localhost" callout.
+
+## Discord bridge & admin chat
+
+New requirement: a Discord bridge with **three separate channels/webhooks** — public chat, admin (staff-only) chat, and console output — plus an in-game **`/o`** staff broadcast command (TFM-style admin chat), and **Discord account linking that lets a linked staff member run console commands from the admin Discord channel**, mirroring TFM's own Discord-as-remote-console pattern.
+
+- New `discord/` module, built on Discord4J (`com.discord4j:discord4j-core`, reactive/Project-Reactor-based), added via the same `MavenLibraryResolver` loader pattern as HikariCP rather than shaded in. Off by default (`modules.discord.enabled: false`) — requires a bot token to do anything, so there's no sane always-on default.
+- Three distinct webhook/channel bindings in config: `discord.public-channel-id` (mirrors in-game public chat both directions), `discord.admin-channel-id` (mirrors `/o` admin chat both directions, **and** is the only channel that accepts console commands — see below), `discord.console-channel-id` (**one-way only**: server console/log stream out; deliberately does not accept commands in, since a channel that's constantly scrolling with log spam is both a poor UX and a worse security surface for something as sensitive as command execution than the quieter, already staff-only admin channel).
+- **Account linking**: `/discord link` in-game generates a short-lived one-time code (`rigel_discord_link_codes`, TTL-expiring); the player runs the Discord slash command `/link code:<code>` (DM'd to the bot) to bind their Discord user id to their RigelMCMod player UUID, stored in `rigel_discord_links(uuid, discord_user_id, linked_at)`. A DM slash command rather than a public-channel one, so codes are never visible to anyone but the linking player. Unlink via `/discord unlink`. Replies are ephemeral (only the invoking user sees them).
+- **Console-via-Discord is the security-sensitive part**, so it's scoped tightly: the `/console command:<command>` Discord slash command (not a `!`-prefixed message - see below) is only usable in the admin channel, enforced both by Discord itself (registered with `dmPermission(false)`) and by an explicit channel-id check in the handler; only linked accounts whose in-game rank is `Senior Admin` (the top rank) may issue them, never from DMs or the console/public channels, every attempt (successful or rejected) is written to `rigel_audit_log` with the Discord user id attached, and execution is dispatched through Bukkit's normal console-command-sender path (no special privilege escalation beyond what a console sender already has) — same blast radius as TFM's version, but explicitly rank-gated, link-gated, and audited rather than "any linked account," which is the concrete improvement over just copying the pattern as-is.
+- **Slash commands, not `!`-prefixed messages**: `/link` and `/console` are real Discord application commands (registered globally on bot connect, Discord's own native command UI/autocomplete), not plain-text messages starting with `!` - a deliberate later revision from the original `!link`/`!<command>` message-parsing design. Plain chat relay (public/admin channel messages mirrored in-game both ways) is unaffected and still message-based, since that's not a command, just chat.
+- `/o <message>` — in-game staff broadcast to online staff + the admin Discord channel, permission-gated (`rigelmcmod.chat.adminchat`), independent of the Discord bridge being enabled at all (works in-game-only if Discord isn't configured).
+- Scheduling note: this is a big enough standalone unit (new external dependency, bot lifecycle management, account linking flow, security-sensitive command execution) that it's tracked as its own roadmap phase rather than folded into Phase 1 — see Phased roadmap below. `/o` itself (in-game only, no Discord) ships as part of Phase 1's chat module since it needs no external dependency.
+
+## Auto-op, the op-bypass footgun, /saconfig, vanish, and MOTD (implemented alongside Phase 1)
+
+Five more additions, all landing together because the first two are causally linked:
+
+- **`core/AutoOpModule`** — every joining player is granted vanilla Bukkit operator status unconditionally (`PlayerJoinEvent`, `EventPriority.LOWEST`). This is the literal defining trait of a Free-OP server, and it's *why* `protect/`'s tiered command-access system was designed to never rely on raw Bukkit permission checks for its own gating - it compares RigelMCMod's own tracked rank instead (`PermissionGate#hasAtLeastCached`, pure in-memory, no Bukkit permission system involved).
+- **A real bug this surfaced**: `BlockedCommandListener`'s bypass flag (`rigelmcmod.protect.bypass.blockedcommands`) was checked via raw `Player#hasPermission(...)` but never explicitly registered with the plugin manager. Bukkit's fallback for *any unregistered* permission string is "true if the player is op" — so the instant auto-op landed, that bypass would have silently resolved true for every single player, defeating the entire tiered command-access system. Fixed by explicitly registering it with `PermissionDefault.FALSE` in `ProtectModule#registerListeners`, and captured as a standing project rule in CONTRIBUTING.md so it doesn't get reintroduced by a future permission check that skips registration.
+- **Two commands added to `protect.command-access`** as concrete instances of "claw back a dangerous op-gated command from the auto-op'd masses": `tpo`/`tpohere` (Essentials' teleport-bypass-confirmation commands) and `vanish`, all gated to `moderator`+.
+- **`rank/RankAdminModule`** — `/saconfig` (TFm-style naming), **console-only** (`.requires(source -> !(source.getSender() instanceof Player))`, covers both direct console and RCON): `addadmin <player> [rank=moderator]`, `removeadmin <player>`, `setrank <player> <rank>`. Console-only is a deliberate security boundary — granting the top rank requires actual server access, not just being in-game. This is also now the documented bootstrap flow for a fresh install (since auto-op alone grants vanilla op, not a real RigelMCMod rank): install, start, join once, then run `/saconfig addadmin <you> senior_admin` from the console.
+- **`vanish/VanishModule`** — RigelMCMod's own vanish (`/rvanish`, Moderator+), stronger than Essentials' default: hidden from every player below Moderator rank, including other auto-op'd non-staff (via `Player#hidePlayer`/`showPlayer`, re-applied on join so latecomers don't see through it). Registered as `/rvanish`, not the bare `/vanish` — Essentials already owns that name, and which plugin's Brigadier registration wins a same-literal collision on Paper is unverified (see Open items); `protect.command-access`'s `vanish: moderator` entry blocks the bare command for non-staff regardless of which plugin ends up answering it, since that check runs at `PlayerCommandPreprocessEvent` time, before either plugin's handler executes.
+- **`motd/MotdModule`** — TFM-style rotating MOTD (`motd.entries`, one chosen at random per server-list ping if more than one configured), MiniMessage-formatted via `ServerListPingEvent#motd(Component)` (the modern Adventure-native setter — confirmed via Paper 26.1.2 javadoc that `setMotd(String)` is deprecated in its favor).
+
+## Display names: rank/title prefixes, /tag, /nick, tab list header/footer
+
+A cohesive "how a player is displayed" subsystem, since these four asks all compose into one rendered name:
+
+- **`rank/PrefixService`** — actually renders the rank+title prefixes that already existed as inert data on `Rank`/`Title` (`&`-legacy-coded, e.g. `"&8[&6Senior Admin&8] &r"`) - composes and caches them as an Adventure `Component` per online player, refreshed on join and on rank change (`RankAdminModule`). Also resolves each player's *name* color (not just the bracketed prefix) from `Rank.nameColor`/`Title.nameColor`, applied identically in chat, the tab list (`chat/PlayerDisplayService`), and the overhead nametag (`rank/NameTagService`, via a scoreboard `Team`) - unranked/untitled players (the generic `[OP]` case) get no color in any of the three.
+- **`tag/TagService`** + `/tag <text>` / `/tag clear`, **`nick/NickService`** + `/nick <name>` / `/nick clear [player]` — self-service personal customization, TFM-style (`Command_tag`, `Command_denick`/`nickfilter`/`nickclean`). Both persisted (`rigel_player_tags`, `rigel_player_nicks`), both open to any player (cosmetic, not power), both share **`chat/ImpersonationGuard`** - rejects text containing a bracketed staff term (`[Owner]`, `[Admin]`, `[Mod]`, etc.) so a tag/nick can't visually spoof a real rank/title prefix. `/nick clear <player>` additionally allows Moderator+ to force-clear someone else's nickname (the TFM `/denick` concept, folded into the same command tree rather than a separate command name). Deliberately **not** a full profanity filter — no canonical word list is bundled or endorsed; scope is specifically anti-impersonation.
+- **`chat/PlayerDisplayService`** — unifies prefix + (nickname or real name) + tag into one composed `Component`, applied to both the tab list (`Player#playerListName`) and chat (`chat/ChatFormatListener` via `AsyncChatEvent#renderer`).
+- **`chat/TabListBroadcaster`** — tab list header ("RigelMC" by default) + footer (default shows live online/max count via `{online}`/`{max}` placeholders), MiniMessage-formatted, applied on join and refreshed every 5s for everyone so the count stays current. Uses the deprecated `setPlayerListHeaderFooter(String, String)` deliberately, not by oversight — confirmed by inspecting Paper 26.2's actual `Player` bytecode (via `javap`, since a web-fetched doc summary turned out to be wrong here) that `playerListHeader()`/`playerListFooter()` are Component-typed **getters only**; every setter on this API surface is a deprecated legacy-string/BungeeComponent overload, with no Component-native replacement yet.
+
+## Chat rendering fix, tag-as-prefix, config-driven titles, usage-help, scoreboard
+
+A follow-up batch, mostly triggered by one real bug found in live testing:
+
+- **Chat prefixes weren't rendering at all** - confirmed in testing: chat showed vanilla `<name> message` with no prefix, even after bumping the modern `AsyncChatEvent` renderer to `HIGHEST` priority. Root cause (Paper's documented legacy-chat compatibility bridge): any other plugin still listening for the legacy `org.bukkit.event.player.AsyncPlayerChatEvent` (Essentials commonly does) causes Paper to fall back to that pipeline for the final send, discarding the modern renderer's output regardless of its priority - the two aren't the same mechanism. Fix, verified via `javap` against the actual Paper 26.2 jar rather than assumed: **`chat/ChatFormatListener` now hooks the legacy `AsyncPlayerChatEvent` + `setFormat(...)` directly, at `EventPriority.HIGHEST`** - deliberately mirroring TotalFreedomMod's own `ChatManager` (verified against its source), which uses the exact same event/priority/format-string approach. Essentials is a `load: BEFORE` dependency, so our same-priority listener registers after it and wins.
+- **`/tag` is a prefix, not a suffix** - shown *before* the name, not after. For a default-rank player (the generic `[OP]` everyone gets) a set tag **replaces** `[OP]` entirely rather than showing alongside it; ranked staff keep their rank prefix with the tag appended right after it, still before the name. `rank/PrefixService` tracks whether a player's cached prefix is "default-rank-only" so `chat/PlayerDisplayService` knows when the override applies. Chat and the tab list share this exact same composition function, so both stay consistent automatically.
+- **Tags are session-only, never persisted** - unlike rank/title/nickname (all DB-backed, survive relogs), a `/tag` resets the moment a player leaves. This was an explicit, deliberate requirement, not an oversight - `tag/TagService` has no DAO/table backing it at all anymore (the `rigel_player_tags` table was removed from the migration pre-release), just an in-memory cache cleared on quit.
+- **`/tag set <text>` / `/tag clear`** - restructured from a bare `/tag <text>` to an explicit `set` subcommand for symmetry with `clear`.
+- **Config-driven title auto-grant** - `config.yml`'s `titles` section (`owner`/`executive`/`developer` username lists, case-insensitive, config-extensible to custom title ids) auto-grants the listed usernames their title on join, idempotently (`TitleService#ensureGranted` checks before granting, avoiding a primary-key violation on repeat joins). Defaults `titles.owner: ["LightWarp"]`.
+- **Every command now has a usage-help fallback** (`command/CommandUsage`) at every node that has subcommands/required args but can itself be the end of the input - without it, Brigadier's own error is Minecraft's unhelpful generic "Unknown or incomplete command" (confirmed confusing in testing - `/tag` and `/nick` typed bare both hit this before the fix). `/saconfig` needed special care here: its console-only check now runs *first* at every depth including the new usage-fallback paths, so a player never sees usage text (or anything closer to actually running it) - confirmed still fully blocked for all players, staff included, exactly as before.
+- **`scoreboard/ScoreboardModule`** - configurable, independently toggleable (`modules.scoreboard.enabled`) sidebar scoreboard, MiniMessage title + lines (`{online}`/`{max}` placeholders), refreshed every 5s alongside the tab list footer. One shared `Scoreboard`/`Objective` rather than per-player (content is server-wide, cheaper to keep in sync). Uses `Score#customName(Component)` - confirmed present via direct bytecode inspection of Paper 26.2, the modern replacement for the old unique-color-code-prefix entry hack.
+- **Hardcoded rank/title prefix colors** (user-specified for `[OP]`=red and Moderator; the rest chosen for a consistent ladder, all in the `&8[&<color><Name>&8] &r` bracket format): see `Rank.java`/`Title.java` directly for current values - they're plain Java constants, not config, by design.
+
+## Flatlands wipe & announcements (implemented alongside Phase 1)
+
+Two smaller, self-contained additions pulled forward from Phase 3/4's `world/` and `announce/` modules, since they had no real dependency on the anti-grief/rollback work still ahead:
+
+- **`world/FlatlandsService`** — manages a disposable superflat sandbox world (`world.flatlands.world-name`, reuses vanilla's own `WorldType.FLAT` generator rather than a custom `ChunkGenerator`). `/wipeflatlands` (Senior Admin+) wipes it immediately: evacuates any players in it to the main world's spawn, unloads it, deletes its folder asynchronously, recreates it. A configurable autowipe schedule (`world.flatlands.autowipe.enabled` / `interval-hours`) runs the same flow automatically, broadcasting a warning (`warning-minutes-before`) first; the last-wipe timestamp is persisted (`rigel_world_state`) so the schedule survives restarts instead of resetting every reboot.
+- **`announce/AnnounceModule`** — a rotating broadcaster (`announce.broadcast.messages`, one per `interval-minutes`) plus a one-off `/announce <message>` command (Moderator+). "Configurable with colors" is MiniMessage throughout (`<red>`, `<gradient:...>`, etc.), both for the configured rotation list and the command argument, rather than legacy `&`-codes.
+
+## Ranks vs. Titles
+
+Mirroring TFM's own `Rank`/`Title` split (kept separate there for a reason): **Ranks** are the permission-bearing ladder; **Titles** are cosmetic/honorary labels layered on top that don't themselves grant permissions.
+
+- **Rank ladder** (ascending, each level a superset of the last, stored in `rigel_ranks` with a `weight`): `Moderator` → `Admin` → `Senior Admin` (top permission rank — server flags, plugin control, full anti-grief bypass; no separate Super Admin rank).
+- **Titles** (orthogonal, stored in `rigel_titles`, assigned independently of rank, each with its own tab-list/chat prefix and color, no implied permissions by default): `Developer`, `Executive`, `Owner`. These sit "above" Senior Admin conceptually/cosmetically but grant **the same permissions as Senior Admin** — they're honorary labels for who holds them, not an additional permission tier. Config-extensible so operators can add more (e.g. `Builder`, `Support`) without a schema change. A player's displayed prefix composes rank + title (e.g. a Senior Admin who also holds the Owner title shows both, exactly as on TFM).
+
+## Repo layout & build tooling
+
+Two Gradle modules from day one (splitting a public API out later, once other plugins want to integrate, is painful; splitting now is nearly free):
+
+```
+RigelMCMod/
+  settings.gradle.kts
+  build.gradle.kts              # subprojects{}: Java 25 toolchain, common repos
+  gradle/libs.versions.toml     # version catalog
+  LICENSE                       # RigelMCMod License (custom, source-available) — see note above
+  README.md  CONTRIBUTING.md
+  .github/workflows/build.yml   # checkout -> setup-java 25 -> ./gradlew check
+  .github/workflows/release.yml # tag-triggered shadowJar -> GitHub Releases/Hangar/Modrinth
+  api/                          # RankProvider, BanProvider, Rigel*Event interfaces — compileOnly paper-api only
+  plugin/
+    build.gradle.kts            # com.gradleup.shadow, xyz.jpenilla.run-paper, Checkstyle, SpotBugs
+    src/main/java/org/rigelmc/...
+    src/main/resources/paper-plugin.yml, config.yml, lang/en_US.yml, db/migration/V1__init.sql
+    src/test/java/org/rigelmc/...    # MockBukkit + JUnit 5
+  docs/architecture.md  docs/permissions.md  docs/testing.md
+```
+
+**`paper-plugin.yml` (draft):**
+```yaml
+name: RigelMCMod
+version: '1.0.0-SNAPSHOT'
+main: org.rigelmc.RigelMCMod
+bootstrapper: org.rigelmc.RigelBootstrap
+loader: org.rigelmc.RigelPluginLoader
+api-version: '26.2'
+dependencies:
+  server:
+    Essentials:          { load: BEFORE, required: false, join-classpath: false }
+    LuckPerms:            { load: BEFORE, required: false, join-classpath: false }
+    Vault:                 { load: BEFORE, required: false, join-classpath: false }
+    CoreProtect:          { load: BEFORE, required: false, join-classpath: false }
+    LibsDisguises:        { load: BEFORE, required: false, join-classpath: false }
+    SkinsRestorer:        { load: BEFORE, required: false, join-classpath: false }
+    WorldGuard:           { load: BEFORE, required: false, join-classpath: false }
+    FastAsyncWorldEdit:   { load: BEFORE, required: false, join-classpath: false }
+    floodgate:            { load: BEFORE, required: false, join-classpath: false }
+```
+`join-classpath: false` throughout — every integration happens only through each plugin's own published API added as `compileOnly`, never assumed present. This is a consistent design pattern across the whole plugin: **detect at enable time, degrade gracefully if absent, defer to the specialized plugin if present** — already required for the Essentials collision fix, and now reused for every other soft integration below rather than inventing a one-off pattern per plugin.
+
+**Library injection fixes TFM's `NoClassDefFoundError` class of bug directly:** HikariCP, sqlite-jdbc, and `mariadb-java-client` (LGPL — a permissive-copyleft license that stays cleanly linkable regardless of the top-level plugin's own license — chosen over MySQL Connector/J's GPL+exception) are *not* shaded in. `RigelPluginLoader implements PluginLoader` resolves them at load time via `MavenLibraryResolver`, giving clear, version-pinned failure messages instead of silent shading breakage. `paperweight-userdev` is deliberately **excluded** — no Mojang-mapped/NMS access needed, keeping upgrades across future 26.x drops cheap.
+
+## Package breakdown (pattern shown once per area; representative classes only)
+
+Base package `org.rigelmc`.
+
+- `RigelMCMod` (main) / `RigelBootstrap` / `RigelPluginLoader`
+- `core/` — `RigelConfig` (per-module toggle flags), `PluginModule` interface (`isEnabled()`, `registerListeners()`, `contributeCommands(Commands)`) — every feature area implements this so disabled modules never touch listeners or the command tree
+- `command/` — `AbstractRigelCommand`, `CommandRegistrar` (single `LifecycleEvents.COMMANDS` handler sweeping enabled modules), `EssentialsCollisionPolicy`
+- `rank/` — `Rank`, `RankService`, `RankRepository`, `Title`, `TitleService`, `TitleRepository`, `PermissionGate`, `bridge/LuckPermsBridge`, `bridge/VaultPermissionBridge`, tab-list/chat prefix listener composing rank + title
+- `punish/` — consolidated under one Brigadier root: `ban/`, `freeze/`, `cage/`, `warn/`, `mute/` services, each with a repository; thin distinctly-named top-level aliases (`/freeze`, `/cage`) for muscle memory. `cage/CageService` uses the **WorldEdit bridge** (see below) for cage build/restore instead of raw block snapshots.
+- `protect/` — `BlockedBlockRegistry`, `BlockedEntityRegistry`, `BlockedEffectRegistry`, `CommandAccessRegistry` (TFM-syntax-compatible tiered command access - see its own javadoc), `AntiNukeService`, `AntiSpamService`, `MovementValidator`, `bridge/WorldGuardBridge` (admin-defined protected zones, e.g. spawn — reuses WorldGuard's region engine rather than inventing region storage; **independent of** the global anti-nuke/blocking primitives above, which must still apply even to OPs who'd normally hold a WorldGuard region-bypass permission — this is explicitly the gap TFM-style plugins exist to cover, so the two layers coexist on purpose, not redundantly). `protect/area/` — `/protectarea` (own DB-backed player-facing region system, not built on `WorldGuardBridge` above - see "Protected areas: /protectarea" section). `protect/worldedit/` — `WorldEditAbuseGuard` (command-preprocess abuse checks) plus `worldedit/extent/` (the real `compileOnly` WorldEdit/FAWE dependency: `EditSessionEvent` extent chain giving `/protectarea` per-block enforcement against a live edit, and the selection-volume/container/blocked-type caps - see "Protected areas: /protectarea" section). Two explicit cleanup commands live here, both config-filterable (include/exclude lists by `EntityType`) and tick-budgeted so a large purge on a busy server doesn't spike the main thread:
+  - `MobPurgeService` → `/mobpurge [world|radius]` — removes living, non-player entities (hostile/passive mobs), with a config default excluding named/tamed/leashed mobs from removal.
+  - `EntityWipeService` → `/entitywipe [world|radius]` — removes **non-living dropped entities**: item drops, experience orbs, arrows/tridents stuck in blocks, and other ground clutter — distinct from `/mobpurge`, since server owners commonly want to clear item lag without touching mobs (or vice versa). Both are also exposed as scheduled repeating tasks (`world.auto-entitywipe-interval`, `world.auto-mobpurge-interval`) for periodic automatic cleanup, not just on-demand commands.
+- `world/` — `AdminWorldService`, void/"cleanroom" generation, `WorldResetService`, `WorldFlagService` — bulk fill/clear operations go through the same **WorldEdit bridge**
+- `worldedit/` — `WorldEditBridge` interface with three implementations selected at enable time: `FaweEditSession` (preferred, if FastAsyncWorldEdit present), `VanillaWeEditSession` (if only WorldEdit present), `NaiveTickBudgetedSetter` (built-in fallback if neither present) — one abstraction, three backends, always functional, and it directly reinforces "better optimized" since bulk block ops (cage restore, cleanroom fill, world reset clear) get FAWE's async performance for free when it's installed
+- `rollback/` — **`CoreProtectBridge`**, a thin wrapper calling CoreProtect's public rollback/restore/lookup API (`/punish rollback player <name> time <t> radius <r>` etc. maps directly onto CoreProtect's API parameters). CoreProtect is treated as a strongly-recommended companion plugin, not reimplemented — if absent, `/punish rollback` explains it's required rather than the plugin maintaining a second, redundant change-journal. This is a deliberate scope reduction versus a from-scratch rollback log. Also backs the automatic rollback triggered by `/ban` and the opt-in `-r` flag on `/tban` (see Ban system section).
+- `webpanel/` — opt-in, off-by-default, token-authenticated, localhost-bound-by-default read-only HTTP dashboard (stats/bans/permban cases). See Ban system section for the full security rationale.
+- `disguise/` — `DisguiseBridge` wrapping LibsDisguises' `DisguiseAPI` (player/mob disguises), soft-dependency, module disabled with a clear log message if LibsDisguises isn't installed (no built-in fallback attempted — disguising correctly across all entity types is exactly LibsDisguises' specialty)
+- `skin/` — `/skin <playername|url|reset>`. Prefers **SkinsRestorer's public API** if present (defers to its skin storage/caching/application, avoiding two systems fighting over the player's skin), falling back to a lightweight built-in implementation using Paper's `PlayerProfile` texture-property API + Mojang session-server lookups if SkinsRestorer isn't installed
+- `fun/` — jump pads, landmines, novelty guns, particle trails — each its own independently-toggleable `PluginModule`, with an anti-nuke exemption path for their own effects
+- `identity/` — `PlayerIdentity` (JAVA/BEDROCK/OFFLINE), `IdentityService` (Floodgate-API-backed detection with online-mode-based fallback), consumed by `punish/ban`, `skin/`, and `protect/MovementValidator`
+- `playerdata/`, `chat/` (mute/colorme/staff channel/command-spy), `gate/` (login gate — trusts proxy/Floodgate auth, only applies RigelMCMod-specific gating), `flags/` (generic runtime KV toggles), `announce/`, `backup/`
+- `data/` — `DataSourceFactory` (Hikari + SQLite/MySQL switch), `MigrationRunner`, `dao/*` (all async, `CompletableFuture`-returning, never touching Bukkit API off the main thread)
+- `importer/` — optional, Phase 5, best-effort legacy TFM YAML import
+
+## Command framework & the Essentials collision fix
+
+1. **Consolidation, not 85 flat commands.** Punishment/admin actions register as subcommands of a few roots (`/punish ban|tempban|freeze|cage|warn|kick|mute|rollback`), shrinking the top-level-name collision surface and giving a clean `rigelmcmod.punish.*` permission hierarchy plus free Brigadier tab-completion.
+2. **Default-safe naming table** — RigelMCMod never claims a name Essentials already owns:
+
+   | Concern | Essentials owns | RigelMCMod |
+   |---|---|---|
+   | Player list | `/list` | not implemented (`/staff` if needed) |
+   | Kick | `/kick` | `/kick` — RigelMCMod's `/kick` shadows Essentials' name here deliberately, same rationale as `/ban` below; document telling operators to disable Essentials' own kick command to avoid confusing overlap |
+   | Ban/unban | `/ban`, `/banip`, `/unban` | `/ban` (24h+auto-rollback), `/tban` (custom duration), `/permban` (cascading), `/punish unban` — RigelMCMod's `/ban` shadows Essentials' name here deliberately, since punishment bans are core to this plugin's purpose; document telling operators to disable Essentials' own ban commands to avoid two ban systems disagreeing about a player's status |
+   | Mute | `/mute` | `/punish mute` — **documented as two independent systems**, not a naming collision; docs tell operators to disable Essentials' mute if both installed |
+   | Teleport/warp/home | `/tp`, `/warp`, `/home` | **not implemented at all** — entirely Essentials' domain |
+   | Vanish | `/vanish` | `/rvanish` (Moderator+) is RigelMCMod's own, stronger vanish — hidden from non-staff auto-op'd players too, not just regular players. Bare `vanish` is blocked for non-staff via `protect.command-access` regardless of which plugin's registration answers it (updated from the original "defer to Essentials" plan — see the "Auto-op..." section above for why a Free-OP server's threat model needs this stronger than Essentials' default) |
+   | Skin | *(none)* | `/skin` — defers to SkinsRestorer if present, see above |
+3. **Config-gated aliasing** (`aliases.enable-shadowing: false` by default) for operators who want shorter names.
+4. **Defensive runtime check**: since Essentials is declared `load: BEFORE`, `CommandRegistrar` checks `isPluginEnabled("Essentials")` at enable time and forces shadowing off regardless of config if true, logging why.
+5. **Operationalized verification**: `docs/testing.md` includes a collision matrix manually re-tested each phase with both plugins installed side by side.
+
+## Data layer
+
+HikariCP + SQLite default (`plugins/RigelMCMod/data.db`) or MySQL/MariaDB via config. **Every table keys on UUID** — fixes TFM's username-keyed data bug at the schema level. Sketch:
+
+- `rigel_players` (now includes `identity_type` — `JAVA`/`BEDROCK`/`OFFLINE`, see Network topology section above), `rigel_ranks`, `rigel_rank_permissions`, `rigel_titles` (title definitions + per-player assignment)
+- `rigel_bans` (one table for name/IP/temp/perm via `type` + nullable `expires_at` + nullable `case_id` for permban cascades — see Ban system section)
+- `rigel_ip_history(uuid, ip_hash, first_seen_at, last_seen_at)` — full login history (not just last-known), powers the `/permban` cascade lookups in both directions
+- `rigel_freezes`, `rigel_cages` (now stores a WorldEdit-bridge clipboard reference rather than a raw BLOB), `rigel_warns`
+- `rigel_flags` — generic KV for blocked-blocks/entities/effects/commands and other runtime toggles, so new flags never need a migration
+- `rigel_audit_log` — append-only accountability trail every punishment action writes to (TFM's audit trail was thin; this is a concrete improvement)
+- No `rigel_rollback_log` table — rollback data of record lives in CoreProtect; RigelMCMod stores no duplicate change journal.
+
+Hand-rolled migration runner (`rigel_schema_version` + ordered `db/migration/V*.sql` applied transactionally at startup) rather than Flyway, keeping the dependency footprint minimal.
+
+## Protected areas: /protectarea
+
+Built to genuinely improve on TFM's real `ProtectArea`/`Command_protectarea` (studied
+directly from its production source, not assumed), not just replicate it. TFM's actual
+model turned out to be much thinner than expected: purely binary protection (`if
+(plugin.al.isAdmin(player)) return;` in every single handler — no per-region owner, no
+member list, no other granularity at all), only three *global* config booleans (not
+per-region flags) covering PvP/potions/item-pickup, no overlap prevention on region
+creation at all (only exact-name-collision is rejected), a flat YAML file rewritten
+wholesale on every mutation, no boundary visualization, no pagination on `list`, and a
+dead `auto_protect_spawnpoints` config option that implies behavior `onStart()` never
+actually implements. Confirmed via a full read of `WorldEditHook.java` (2204 lines) and
+`ProtectArea.java`/`Command_protectarea.java`.
+
+RigelMCMod's version (`protect/area/`, DB-backed via `rigel_protect_areas`/
+`rigel_protect_area_members`/`rigel_protect_area_flags`):
+
+- **Real per-region ownership**: an explicit member list (any player, staff or not) that
+  bypasses that one region's flags, on top of a Moderator+ staff floor — not TFM's single
+  "any admin bypasses every region" rule.
+- **Six real per-region flags** (`AreaFlag`: `build`, `pvp`, `explosions`, `entry`,
+  `item-pickup`, `interact`), each independently overridable per region rather than
+  three global toggles applying to every region or none. `entry` has no TFM equivalent at
+  all — TFM's protection only ever stops modification, never blocks walking in.
+- **An overlap/priority policy** TFM has none of: creation is rejected by default if it
+  would overlap another enabled region, with an explicit `-nest` escape hatch for
+  intentional nesting (auto-assigned a higher priority than what it overlaps). At runtime,
+  the governing region for an overlapping point resolves by highest priority, then
+  smallest volume, then most recent creation — the same convention WorldGuard uses, not a
+  novel one.
+- **Closes one real TFM coverage gap**: `InventoryMoveItemEvent` (hopper/container-to-
+  container transfer) is enforced under `item-pickup`; TFM only ever covers item-*entity*
+  pickup, so a hopper chain can silently siphon items out of a "protected" TFM region.
+- **Boundary visualization** (`/protectarea info <name> -show` — a bounded, on-demand
+  particle outline, `AreaBoundaryVisualizer`) and **paginated `list`** — TFM has neither.
+- Deliberately **cuboid-only for now** (`shape_type` is a forward-compat discriminator
+  column, not a promise) — matches TFM's own real behavior (it collapses any WorldEdit
+  selection shape down to its bounding box too), so this isn't a regression relative to it.
+
+**WorldEdit/FAWE edit-level enforcement (`protect/worldedit/extent/`)**: Bukkit-event
+protection alone can never stop a WorldEdit/FAWE edit specifically — WorldEdit's own
+block-writing API doesn't fire standard Bukkit block events at all. This tier adds a real,
+`compileOnly` (non-shaded) compile-time dependency on `worldedit-bukkit`/`worldedit-core`
+7.3.10 (TFM's own pinned version — same EngineHub Maven coordinates, verified by reading
+TFM's real `build.gradle`) and an `EditSessionEvent` extent chain
+(`WorldEditExtentService` subscribes to `WorldEdit.getInstance().getEventBus()` — Guava's
+own `@Subscribe`, reflectively discovered, exactly like TFM's real `WorldEditHook`):
+
+- **`ProtectAreaExtent`** — the core deliverable, always wraps (staff and non-staff alike;
+  bypass is decided per-region via `ProtectAreaService#isBypassing`, not a blanket
+  staff-skip). **Per-block**, not TFM's per-session-cached check: TFM's real
+  `ProtectedAreaExtent` lazily checks *once*, on the first block written, whether the
+  edit's running bounding box overlaps a protected region, then applies that single
+  verdict to every remaining block — so an edit spanning both protected and unprotected
+  space either sails through entirely or is denied entirely, including blocks nowhere near
+  the region. This class instead resolves the governing region independently for every
+  block position, so only the blocks that actually fall inside a `build=deny` region are
+  skipped.
+- **`VolumeLimitExtent`/`ContainerLimitExtent`/`BlockedTypeExtent`** — the selection-volume,
+  container-placement, and blocked-block-type caps (`protect.worldedit.limits.*`),
+  non-staff only, matching TFM's `LimitExtent`/`ContainerLimitExtent`/`BlockedTypeExtent`.
+  One deliberate scope reduction from TFM: TFM also ships a separate `TileLimitExtent`
+  catching non-container tile-entities (signs, skulls, banners, ...) via a hand-maintained
+  block-id/suffix list; WorldEdit's public `BlockMaterial` exposes no broader "is this a
+  tile-entity" signal than `hasContainer()` to check against without that fragile,
+  needs-updating-every-version list (confirmed via direct `javap` of the actual API), so
+  this project covers containers only — a documented reduction, not a silent gap.
+- `/protectarea create`/`update <name> -wand [-nest]` reads the player's live WorldEdit
+  selection (`LocalSession#getSelection`) instead of requiring explicit corner coordinates
+  — purely additive; the explicit-coordinate form still needs no WorldEdit dependency at
+  all.
+- Presence-detection stays graceful: `WorldEditExtentService` polls a bounded number of
+  times on enable (same retry-then-give-up shape as `crash.packet.CrashPacketService`) and
+  simply never attaches if neither WorldEdit nor FAWE is installed — command-preprocess
+  abuse checks and Bukkit-event `/protectarea` enforcement both keep working regardless.
+
+**Not independently verifiable in this sandbox**: no live Paper server and no way to
+smoke-test a real WorldEdit/FAWE edit session. Verified as far as this sandbox allows —
+dependency resolution (`gradle :plugin:dependencies`), full compilation, and every API
+signature used (`javap` against the actual resolved jars, cross-referenced against TFM's
+real, same-pinned-version source) — but the actual runtime behavior of the extent chain
+needs manual confirmation on a real server.
+
+## Cross-cutting services
+
+- **Anti-nuke**: in-memory sliding-window counters (`ConcurrentHashMap<UUID, RateWindow>`) over block break/place/explode events — synchronous since cancellation must happen sync, no DB round-trip on the hot path. Breach → cancel, optional auto-freeze, staff notify, async audit-log write. Applies regardless of WorldGuard region bypass or OP status — see `protect/` note above.
+- **Anti-spam**: chat via `AsyncChatEvent` (already off-thread), commands via `PlayerCommandPreprocessEvent`.
+- **Movement validator**: heuristic, **alert-only by default** (not auto-punish) — false positives are costly on a trust-based sandbox server; admins exempt by default since legit admin-fly is normal on a Free OP server.
+- **Permission fallback**: every node registered via `PluginManager#addPermission` at enable time regardless of what else is installed. `RankService` grants `PermissionAttachment`s per online player from the DB rank — fully functional standalone. LuckPerms (if present) used for prefix rendering only; RigelMCMod's own DB stays the single source of truth for rank membership. Vault as a second-priority bridge for other perms plugins.
+
+## Testing & CI
+
+- **MockBukkit** (JUnit 5) unit tests: rank/title resolution, ban service **including an explicit empty-list regression test** (the direct fix for TFM's `/permban list` crash), command permission gating, config parsing, `WorldEditBridge` fallback selection logic (mock each of the three backends being absent/present). Rollback/disguise/skin bridges are tested with fakes standing in for the external plugin APIs, not real CoreProtect/LibsDisguises/SkinsRestorer instances. Track MockBukkit's `minecraft/v26` branch / `v26.1.2-SNAPSHOT` coordinate, confirming the closest available branch to 26.2 at implementation time.
+- **GitHub Actions**: build+test on every push/PR (Temurin 25, `./gradlew check` = tests + Checkstyle + SpotBugs); separate tag-triggered release workflow publishing to GitHub Releases, Hangar, and Modrinth.
+- `CONTRIBUTING.md` explicitly documents "never call Bukkit API off the main thread."
+
+## Phased roadmap
+
+0. **Scaffolding** — repo/build/CI skeleton, plugin enables cleanly next to EssentialsX with zero console errors, Hikari+SQLite wiring, `config.yml` module toggles present. Exit: CI green, loads on local Paper 26.1.2 test server.
+1. **Core** — rank ladder + title system + fallback permission ladder + LuckPerms/Vault bridges, command framework + Essentials collision policy, unified ban system (`/ban` 24h+auto-rollback, `/tban` custom duration + opt-in rollback, `/permban` cascading name↔IP resolution, shared `CommandFlags`, `rigel_ip_history`), chat mute, audit log, first-admin bootstrap flow (auto-promote existing `ops.txt` holders to `Senior Admin` rank on first boot, documented as a one-time convenience). Exit: standalone (no perms plugin) verified; rank+ban tests green, including a cascade-permban test (ban by name pulls in all historical IPs, ban by IP pulls in all historical names).
+2. **Anti-grief core** — blocking primitives, anti-nuke, anti-spam, freeze, movement validator, command-spy, `MobPurgeService`/`EntityWipeService` (with scheduled auto-cleanup), `WorldGuardBridge` for admin-defined protected zones. Exit: anti-nuke cancellation tests pass; manual TNT-spam demo without flagging normal building; `/mobpurge` and `/entitywipe` each verified to only remove their intended entity classes (mobs vs. dropped items/orbs/projectiles); WorldGuard region + global anti-nuke both verified to apply independently.
+3. **World tools + rollback + cage** — `WorldEditBridge` (FAWE/WorldEdit/naive fallback), admin worlds, void/cleanroom generation, world reset, `cage/` rebuilt on the bridge, `CoreProtectBridge` rollback commands. Exit: cage restore and world reset both run through FAWE when present with no TPS collapse; `/punish rollback` correctly delegates to CoreProtect; graceful "please install CoreProtect" message when absent. `/protectarea` (`protect/area/`) landed here too, both Bukkit-event enforcement and the `EditSessionEvent` extent-chain layer (`protect/worldedit/extent/`) — see "Protected areas: /protectarea" section for the full split and why the extent chain's runtime behavior still needs manual verification on a real server.
+4. **Fun/gadgets + identity tools** — jump pads, landmines, novelty guns, particle trails, `disguise/` (LibsDisguises bridge), `skin/` (SkinsRestorer bridge + built-in fallback), `/whois`/`/tracker`/`/radar`, backup manager, announcer/MOTD. Each independently toggleable.
+4.5 **Web panel** — `webpanel/` module (see Ban system section): read-only stats/bans/permban-case dashboard, off by default, localhost-bound, token-authenticated. Exit: confirmed unreachable when disabled (default), confirmed token-gated and localhost-only when enabled with default config.
+4.6 **Discord bridge** — `discord/` module (see Discord bridge & admin chat section): Discord4J-based three-channel bridge (public/admin/console), account linking, rank-gated audited console-via-Discord. Exit: linking flow round-trips, an unlinked or under-ranked account cannot execute console commands even from the admin channel, every executed command lands in `rigel_audit_log`.
+5. **Polish/release** — optional TFM YAML importer (best-effort, UUID-resolves via Mojang API rather than trusting old username keys), docs, permissions reference, Hangar/Modrinth publish, 1.0.0 tag. Any future remote-control/webhook feature (TFM's HTTPD equivalent) ships **only** as a separate, off-by-default, token-authenticated addon post-1.0 — never embedded and on-by-default.
+
+Each phase lands as merged, flag-gated PRs to `main` rather than a long-lived branch, so `main` stays deployable throughout.
+
+## Verification
+
+- **Local loop**: `xyz.jpenilla.run-paper`'s `runServer` Gradle task auto-downloads Paper 26.1.2 into `run/`; manually drop EssentialsX, CoreProtect, LibsDisguises, SkinsRestorer, WorldGuard, and FastAsyncWorldEdit jars into `run/plugins/` for full integration smoke-testing (none of these are on a Gradle-resolvable Maven repo suitable for automated download).
+- `docs/testing.md` (Phase 0) captures a manual checklist re-run each phase: rank/title assign, ban/unban, freeze, cage build+restore (via FAWE), a blocked-block trigger, chat mute, `/mobpurge` and `/entitywipe` (confirming each only touches its intended entity class and named/tamed mobs survive a purge), `/punish rollback` against CoreProtect, `/disguise`, `/skin`, WorldGuard protected-zone respected by cage/world-reset but not by global anti-nuke — plus the **Essentials collision matrix**.
+- **Automated**: `./gradlew test` (MockBukkit + fakes for external plugin APIs) runs in CI on every PR; reserve the real `runServer` loop with all companion plugins installed for manual pre-release smoke testing through v1.0.
+
+## Open items to confirm at implementation time (non-blocking)
+
+- MockBukkit's exact branch/coordinate for 26.2 (currently `minecraft/v26` / `v26.1.2-SNAPSHOT` — confirm closest match).
+- `mariadb-java-client` vs MySQL Connector/J is a licensing-fit recommendation to sanity-check, not fixed.
+- Whether `run-paper`'s Paper-jar download already reflects Paper's api.papermc.io → fill.papermc.io migration.
+- Default-enabled vs default-disabled for the Phase 4 fun/gadgets module as a whole — this plan assumes default-enabled to match the Free-OP chaos-server ethos; revisit with the user if a more locked-down default is preferred.
+- CoreProtect, LibsDisguises, SkinsRestorer, and WorldGuard/FAWE version pins (compileOnly) should be locked to the specific releases confirmed 26.2-compatible at the time each phase actually starts, since these are all third-party projects on independent release cadences.

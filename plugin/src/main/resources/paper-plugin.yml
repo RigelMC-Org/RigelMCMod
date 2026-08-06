@@ -1,0 +1,87 @@
+name: RigelMCMod
+version: '${version}'
+main: org.rigelmc.RigelMCMod
+bootstrapper: org.rigelmc.RigelBootstrap
+loader: org.rigelmc.RigelPluginLoader
+description: Admin-rank, anti-grief, and punishment toolkit for Free-OP PaperMC servers.
+website: https://github.com/RigelMC-Org/RigelMCMod
+author: LightWarp
+# Not a field Paper's plugin descriptor schema formally recognizes (only "author"/
+# "authors" is) - included as extra metadata to track project ownership distinctly from
+# authorship. Paper/Bukkit descriptor parsing has always tolerated unrecognized custom
+# keys rather than failing on them, but this hasn't been verified against a live server
+# load in this session - flag it if it ever causes a load issue.
+owner: LightWarp
+# Minimum supported server version, not a pin - '26.1' allows both 26.1.2 and 26.2 to
+# load the plugin. Compiled directly against paper-api 26.1.2 (see
+# plugin/build.gradle.kts) - the actual primary target, not just a floor - after a real
+# runtime NoSuchMethodError surfaced from compiling against 26.2 and running on a live
+# 26.1.2 server (Adventure's Component builder API isn't binary-compatible across those
+# two versions - see CONTRIBUTING.md). Every API this plugin uses has been confirmed
+# identical between 26.1.2 and 26.2 via direct bytecode inspection, so a 26.2 server
+# should still load and run it correctly.
+api-version: '26.1'
+
+dependencies:
+  server:
+    Essentials:
+      load: BEFORE
+      required: false
+      join-classpath: false
+    LuckPerms:
+      load: BEFORE
+      required: false
+      join-classpath: false
+    Vault:
+      load: BEFORE
+      required: false
+      join-classpath: false
+    CoreProtect:
+      load: BEFORE
+      required: false
+      join-classpath: false
+    LibsDisguises:
+      load: BEFORE
+      required: false
+      join-classpath: false
+    SkinsRestorer:
+      load: BEFORE
+      required: false
+      join-classpath: false
+    WorldGuard:
+      load: BEFORE
+      required: false
+      join-classpath: false
+    floodgate:
+      load: BEFORE
+      required: false
+      join-classpath: false
+    # Unlike every other soft dependency above (excluding packetevents, same reasoning),
+    # RigelMCMod compiles directly against WorldEdit's classes (compileOnly, see
+    # plugin/build.gradle.kts - protect.worldedit.extent's EditSessionEvent extent chain)
+    # rather than going through reflection - join-classpath: true is required so this
+    # plugin's own classloader can actually resolve com.sk89q.worldedit.* at runtime
+    # against whatever WorldEdit/FAWE jar is actually installed. Both entries listed since
+    # a server may have either installed (FAWE's main plugin class extends WorldEditPlugin
+    # and registers under the "FastAsyncWorldEdit" name, not "WorldEdit" - see
+    # ProtectAreaCommand#resolveWorldEditPlugin/WorldEditExtentService for the presence-
+    # detection and graceful-disable-if-neither-is-installed side of this).
+    WorldEdit:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    FastAsyncWorldEdit:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    # Unlike every other soft dependency above, RigelMCMod compiles directly against
+    # PacketEvents' classes (compileOnly, see plugin/build.gradle.kts) rather than going
+    # through reflection - join-classpath: true is required so this plugin's own
+    # classloader can actually resolve com.github.retrooper.packetevents.* at runtime
+    # against whatever PacketEvents jar is actually installed, matching TFM's own approach
+    # exactly (see protect.crash.packet.CrashPacketService for the presence-detection and
+    # graceful-disable-if-absent side of this).
+    packetevents:
+      load: BEFORE
+      required: false
+      join-classpath: true

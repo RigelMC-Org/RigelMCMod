@@ -1,0 +1,30 @@
+# Gradle
+.gradle/
+build/
+
+# Local test server (created by ./gradlew runServer)
+run/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+bin/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local runtime data / secrets - never commit real plugin data or DB files
+*.db
+*.db-journal
+plugins/
+
+# Claude Code - local agent session state, never part of the project itself
+.claude/
+CLAUDE.local.md
+.claude.json
+.mcp.json

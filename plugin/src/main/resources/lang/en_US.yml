@@ -1,0 +1,9 @@
+# Default English (US) message strings. MiniMessage format throughout - see
+# https://docs.advntr.dev/minimessage/format.html
+# Placeholder tags like <player> / <reason> are substituted per-message; see
+# docs/architecture.md for the full placeholder reference once commands land.
+
+general:
+  prefix: "<gray>[<gold>RigelMCMod</gold>]</gray> "
+  no-permission: "<red>You do not have permission to do that."
+  player-not-found: "<red>No player found matching '<white><input></white>'."

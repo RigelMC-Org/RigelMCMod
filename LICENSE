@@ -1,0 +1,118 @@
+# RigelMCMod License
+
+Version 1.0, 6 August 2026
+
+Copyright (c) 2026 LightWarp and contributors ("the Contributors").
+
+Commercial rights in the Software are reserved as described in Section 4 to Throwdown
+Media LLP (LLPIN: ACF-2930), a limited liability partnership registered in Chennai, India,
+and to RigelMC, the Minecraft server that Throwdown Media LLP owns, operates, and finances,
+including the hosting infrastructure it runs on (together, the "Rights Holders").
+
+All rights not expressly granted below are reserved.
+
+### 1. Definitions
+
+- **"Software"** means RigelMCMod: its source code, and any Derivative Work.
+- **"Source Form"** means the preferred form of the Software for making modifications,
+  including source code, build scripts, and configuration files.
+- **"Object Form"** means any other form, including compiled, assembled, minified, or
+  otherwise mechanically transformed forms - most notably a built plugin `.jar`.
+- **"Derivative Work"** means any work, in Source or Object Form, that is based on, adapted
+  from, incorporates, or is compiled/assembled from all or part of the Software, including
+  forks and modified versions.
+- **"Commercial Use"** means distributing, selling, sublicensing, hosting-for-resale, or
+  otherwise making the Software or a Derivative Work available to a third party in exchange
+  for payment or other consideration - whether the Software is the entire product being
+  sold or bundled into a larger paid offering. Commercial Use does **not** include operating
+  a Minecraft server, commercial or not, that merely runs the Software internally (including
+  a server that sells ranks, cosmetics, or other perks to its own players) without
+  distributing the Software itself as part of what is being sold.
+- **"Rights Holders"** means Throwdown Media LLP and RigelMC, collectively.
+- **"You"** means the individual or entity exercising the rights granted by this License.
+
+### 2. Grant of License
+
+Subject to the conditions in this License, the Contributors grant You a worldwide,
+royalty-free, non-exclusive, non-transferable, non-sublicensable license to use, study,
+modify, and redistribute the Software and Derivative Works for **non-commercial purposes**,
+provided that:
+
+  a. You retain this License, unmodified, with every copy or Derivative Work You
+     redistribute.
+
+  b. You retain all copyright, author, and contributor notices in the Source Form; they may
+     not be removed or altered.
+
+  c. Any Derivative Work carries a prominent notice stating that it has been modified, and
+     by whom.
+
+  d. You do not use the names "RigelMCMod," "RigelMC," "Throwdown Media," or the name of
+     any Contributor to endorse or promote a Derivative Work without prior written
+     permission.
+
+### 3. Source-Only Redistribution
+
+Redistribution of the Software or a Derivative Work is permitted **only in Source Form**.
+Redistributing, publishing, or otherwise making available a built/compiled/precompiled
+Object Form (including a plugin `.jar`) of the unmodified Software, or of any fork, is
+**prohibited without prior written permission** from the Rights Holders. You may of course
+build and run the Software, or a fork, for your own use; this section restricts giving
+Object Form copies to others.
+
+### 4. Commercial Rights Reserved
+
+Commercial Use of the Software or any Derivative Work is reserved exclusively to the Rights
+Holders: RigelMC and Throwdown Media LLP (LLPIN: ACF-2930), the Chennai, India-registered
+entity that owns, runs, and finances RigelMC and owns the hosting infrastructure that hosts
+it.
+
+This means, without limitation, that no one other than the Rights Holders may sell,
+sublicense, or otherwise commercially exploit the Software or a Derivative Work -
+**including a fork** - in Source or Object Form, without first obtaining the Rights
+Holders' prior written consent. This applies regardless of how much of the original
+Software remains in the Derivative Work.
+
+If you wish to make Commercial Use of the Software or a Derivative Work, contact the Rights
+Holders at **legal@throwdownmedia.net** to request written consent. Consent, if granted,
+will be documented in writing and may be subject to its own separate terms.
+
+Nothing in this Section restricts non-commercial use, modification, or Source Form sharing
+of a fork under Section 2 - only its commercial exploitation and resale.
+
+### 5. No Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE CONTRIBUTORS OR THE RIGHTS HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT,
+OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+### 6. Termination
+
+Any breach of this License automatically terminates the rights granted under Section 2 for
+the breaching party. Those rights may be reinstated at the Rights Holders' discretion if the
+breach is cured within 30 days of receiving notice of it.
+
+### 7. On "Open Source"
+
+RigelMCMod publishes its full source code, welcomes forks and contributions, and can be
+freely used and modified for non-commercial purposes - it is developed and presented as an
+open-source project in that everyday sense. It is worth being precise, though: because of
+the source-only-redistribution requirement (Section 3) and the reserved commercial rights
+(Section 4), this License does not meet the OSI Open Source Definition or the FSF Free
+Software Definition, both of which require unrestricted redistribution in any form and no
+discrimination against fields of endeavor, commercial use included. If that formal
+distinction matters for your use case, treat RigelMCMod as **source-available**, not
+OSI-certified open source.
+
+### 8. Governing Law
+
+This License is governed by the laws of India, without regard to conflict-of-law
+principles. Any dispute arising under this License is subject to the exclusive jurisdiction
+of the courts of Chennai, Tamil Nadu, India.
+
+---
+
+*This License was not drafted or reviewed by a lawyer. If enforceability matters for your
+situation, have it reviewed by counsel qualified in your jurisdiction before relying on it.*

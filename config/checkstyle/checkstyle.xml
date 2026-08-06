@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+  Deliberately minimal starting ruleset: real hygiene issues only (unused/redundant/star
+  imports, empty blocks, broken equals/hashCode pairing), no enforced Javadoc coverage or
+  naming-convention nitpicks. The goal per CONTRIBUTING.md is "remove style nitpicking
+  from PR review", not add new nitpicking - expand this deliberately as the project grows,
+  not by accretion.
+-->
+<module name="Checker">
+    <module name="TreeWalker">
+        <module name="UnusedImports"/>
+        <module name="RedundantImport"/>
+        <module name="AvoidStarImport"/>
+        <module name="EmptyBlock">
+            <property name="option" value="text"/>
+        </module>
+        <module name="EqualsHashCode"/>
+    </module>
+</module>

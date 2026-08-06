@@ -1,0 +1,111 @@
+# RigelMCMod broadcast/announcement messages - the public-facing strings punishment and
+# admin commands (ban, kick, mute, freeze, cage, smite, op/deop, join/leave, ...) show to
+# the whole server, pulled out of Java so you can reword or re-theme them without a rebuild.
+#
+# Every value is MiniMessage-formatted (https://docs.advntr.dev/minimessage/format.html) -
+# any tag works (<red>, <gold>, <bold>, <gradient:...>, etc.). {placeholder} tokens are
+# substituted first, before MiniMessage parsing, so a placeholder's value is never itself
+# interpreted as formatting. Reloadable live via /rmcm reload.
+#
+# You don't need every key present here - a key missing from your copy of this file just
+# falls back to RigelMCMod's own built-in default for it (kept in sync with the values
+# below), and any new key a future update adds gets merged in automatically (see
+# core.ConfigUpdater) without touching anything you've already customized.
+
+ban:
+  # {target}, {reason}
+  public: "<gold>{target} was banned for 24h. Reason: {reason}"
+
+tban:
+  # {target}, {duration}, {reason}
+  public: "<gold>{target} was banned for {duration}. Reason: {reason}"
+
+permban:
+  # {target}, {names}, {ips}, {reason}
+  public: "<gold>Permanently banned '{target}' - cascade covered {names} name(s) and {ips} IP(s). Reason: {reason}"
+
+mute:
+  # {target}, {reason} (may be empty)
+  public: "<red>{target} has been muted for 5 minutes.{reason}"
+  target: "<red>You have been muted for 5 minutes.{reason}"
+  unmute-public: "<red>{target} has been unmuted."
+  unmute-target: "<green>You have been unmuted."
+  # /punish mute - the separate indefinite, staff-facing mute. {target}, {reason}
+  indefinite-public: "<gold>{target} was muted. Reason: {reason}"
+
+freeze:
+  # {sender}, {state} = "enabled"/"disabled"
+  global-toggle: "<red>{sender} {state} global player freeze."
+  global-target: "<red>You have been temporarily frozen due to rulebreakers. You will be unfrozen soon."
+  # {state} = "frozen"/"free to move"
+  global-confirm: "<gray>Players are now {state}."
+  # {sender}
+  purge: "<red>{sender} unfroze every player."
+  # {sender}, {action} = "froze"/"unfroze", {target}
+  individual: "<red>{sender} {action} {target}."
+  individual-target-on: "<aqua>You have been frozen."
+  individual-target-off: "<aqua>You have been unfrozen."
+
+cage:
+  # {sender}, {action} = "caged"/"uncaged", {target}
+  toggle: "<red>{sender} {action} {target}."
+  # {sender}
+  purge: "<red>{sender} uncaged every caged player."
+  target-on: "<red>You have been caged."
+  target-off: "<green>You have been released from your cage."
+
+smite:
+  # {target}
+  public: "<red>{target} has been a naughty, naughty boy."
+  # {reason}
+  reason: "<yellow>  Reason: {reason}"
+  # {reason} (may be empty)
+  target: "<red>You have been smitten.{reason}"
+
+kick:
+  # {target}, {reason}
+  public: "<gold>{target} was kicked. Reason: {reason}"
+  target: "<red>You have been kicked.\n<yellow>Reason: {reason}"
+
+warn:
+  # {target}, {strike}, {reason}
+  public: "<gold>{target} was warned (strike {strike}). Reason: {reason}"
+  target: "<red>You have been warned (strike {strike}).\n<yellow>Reason: {reason}"
+  # Automatic ban-system escalation once a strike threshold is reached (punish.strikes.thresholds).
+  # {target}, {action} = "kicked"/"banned"/"permanently banned", {strike}
+  escalation-public: "<gold>{target} was automatically {action} after reaching strike {strike}."
+  # {action}, {strike}
+  escalation-target: "<red>You have been {action} - strike {strike}."
+
+op:
+  self: "<yellow>You are now op!"
+  # {target}
+  other: "<aqua>Opped {target}."
+
+opall:
+  # {sender}, {count}
+  public: "<aqua>{sender} opped everyone on the server ({count} player(s))."
+
+deop:
+  target: "<yellow>You are no longer op!"
+  # {sender}, {target}
+  public: "<aqua>{sender} deopped {target}."
+
+deopall:
+  # {sender}, {count}
+  public: "<aqua>{sender} deopped everyone on the server ({count} player(s))."
+
+joinleave:
+  # Replaces the vanilla join/quit message entirely - see core.PlayerLoginListener.
+  # {player}
+  join: "<gray><italic>{player} has joined the game.</italic></gray>"
+  quit: "<gray><italic>{player} has left the game.</italic></gray>"
+  # Moderator+ only - a distinctly visible announcement, TFM-style ("admin presence is
+  # always broadcast" - see JoinLeaveMessages.java). {player}
+  staff-join: "<gold><bold>[Staff]</bold> <yellow>{player}</yellow> has joined the server!"
+  staff-quit: "<gold>[Staff] <yellow>{player}</yellow> has left the server."
+  # A second broadcast line shown right after staff-join, only for a staff member who set
+  # their own personal join flavor line via /myadmin setlogin - TFM ref: Command_myadmin.
+  # No placeholders - the player's own (legacy &-code formatted) message is appended after
+  # this prefix in Java, not substituted into it, so it's never itself re-parsed as MiniMessage.
+  staff-login-message-prefix: "<gray>  > "

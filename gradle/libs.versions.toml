@@ -1,0 +1,43 @@
+[versions]
+paper-api = "26.1.2.build.74-stable"
+hikaricp = "7.1.0"
+sqlite-jdbc = "3.53.2.1"
+mariadb-jdbc = "3.5.10"
+discord4j = "3.3.2"
+# Compile-only, not runtime-resolved via RigelPluginLoader like the libraries above -
+# PacketEvents is a soft *server* plugin dependency instead (paper-plugin.yml), matching
+# TFM's own approach exactly: it's shared, singleton-shaped packet-listening
+# infrastructure, and a privately-resolved second copy risks classloader/registration
+# conflicts with any other plugin on the server also using it. See protect.crash.packet
+# for the actual integration.
+packetevents = "2.12.1"
+# Compile-only, non-transitive - matches TFM's own exact pin (confirmed by reading its
+# real build.gradle directly) and its own reasoning: worldedit-core pulls in a large,
+# WorldEdit-version-specific dependency graph a compileOnly consumer never needs at
+# runtime (the actual WorldEdit/FAWE plugin jar already provides all of it). See
+# protect.worldedit.extent for the actual integration - this is the real, compile-time
+# WorldEdit API dependency the presence-detection-only protect.worldedit.WorldEditBridge
+# explicitly deferred needing.
+worldedit = "7.3.10"
+junit-jupiter = "6.1.2"
+shadow = "9.6.1"
+run-paper = "3.0.2"
+spotbugs-plugin = "6.5.10"
+foojay-resolver = "1.0.0"
+
+[libraries]
+paper-api = { module = "io.papermc.paper:paper-api", version.ref = "paper-api" }
+hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqlite-jdbc" }
+mariadb-jdbc = { module = "org.mariadb.jdbc:mariadb-java-client", version.ref = "mariadb-jdbc" }
+discord4j = { module = "com.discord4j:discord4j-core", version.ref = "discord4j" }
+packetevents = { module = "com.github.retrooper:packetevents-spigot", version.ref = "packetevents" }
+worldedit-bukkit = { module = "com.sk89q.worldedit:worldedit-bukkit", version.ref = "worldedit" }
+worldedit-core = { module = "com.sk89q.worldedit:worldedit-core", version.ref = "worldedit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
+
+[plugins]
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
+run-paper = { id = "xyz.jpenilla.run-paper", version.ref = "run-paper" }
+spotbugs = { id = "com.github.spotbugs", version.ref = "spotbugs-plugin" }
+foojay-resolver = { id = "org.gradle.toolchains.foojay-resolver-convention", version.ref = "foojay-resolver" }
