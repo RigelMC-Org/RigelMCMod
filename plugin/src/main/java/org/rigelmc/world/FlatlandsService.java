@@ -70,10 +70,20 @@ import org.rigelmc.data.dao.WorldStateDao;
  * stale file handle from the old process is fully guaranteed to be irrelevant (the old
  * process has, by definition, completely exited by the time a new one is running).</p>
  *
- * <p><b>Unverified against a live server</b> in this session - world creation/deletion
- * needs a real Bukkit world container this test environment doesn't have. The pure
- * scheduling decision ({@link #isWipeDue}) is unit-tested; the actual file/world I/O is
- * not.</p>
+ * <p><b>Resolving the world's real folder</b> - a confirmed, real bug on a live deployment,
+ * not a hypothetical one: this class used to reconstruct the delete target as {@code
+ * Bukkit.getWorldContainer() + worldName}, assuming the classic Bukkit sibling-folder
+ * layout ({@code <container>/flatlands/}). On at least one real Paper install this
+ * assumption was simply wrong - Paper nested every world, including its own default
+ * overworld/nether/end, under {@code world/dimensions/minecraft/<name>/} instead. The
+ * result: every wipe "succeeded" (no exceptions, every broadcast fired normally) while
+ * deleting nothing at all, because the guessed path never existed - confirmed by an
+ * operator directly inspecting their server's filesystem. Both wipe paths now ask the
+ * already-loaded {@link World} object for its real folder ({@link World#getWorldFolder()},
+ * the only authoritative source) instead of guessing: the in-place path does this inline
+ * since the world is still loaded right there; the restart-based path has to persist the
+ * resolved path to {@link #worldStateDao} at request time, since nothing is loaded yet at
+ * the point {@link #initializeWorld()} needs it again next boot to actually delete it.</p>
  */
 public final class FlatlandsService {
 
@@ -132,9 +142,26 @@ public final class FlatlandsService {
                 pending = false;
             }
             if (pending) {
-                deleteWorldFolderRecursively(new File(Bukkit.getWorldContainer(), name));
+                // The folder path persisted by performShutdownWipe (captured from the
+                // still-loaded World object at the moment the wipe was requested) - the
+                // only reliable source, since nothing is loaded yet at this point in boot
+                // to ask World#getWorldFolder() again. Falls back to the old guessed path
+                // only for a pending wipe that predates this fix (no folder ever
+                // recorded), which is not guaranteed correct - see WorldStateDao's javadoc.
+                File worldFolder;
                 try {
-                    worldStateDao.setPendingWipe(name, false);
+                    worldFolder = worldStateDao.findPendingWipeFolder(name)
+                            .map(File::new)
+                            .orElseGet(() -> new File(Bukkit.getWorldContainer(), name));
+                } catch (SQLException e) {
+                    plugin.getLogger().log(Level.WARNING,
+                            "Failed to read the pending flatlands wipe's recorded folder path - falling back to a"
+                                    + " best-effort guess", e);
+                    worldFolder = new File(Bukkit.getWorldContainer(), name);
+                }
+                deleteWorldFolderRecursively(worldFolder);
+                try {
+                    worldStateDao.setPendingWipe(name, false, null);
                     worldStateDao.setLastWipeAt(name, System.currentTimeMillis());
                 } catch (SQLException e) {
                     plugin.getLogger().log(Level.WARNING, "Failed to clear pending flatlands wipe flag after boot-time delete", e);
@@ -204,6 +231,17 @@ public final class FlatlandsService {
 
         wipeInProgress = true;
         World world = Bukkit.getWorld(name);
+        // The authoritative source for a world's real on-disk location, regardless of
+        // whatever internal folder layout Paper is using for it - confirmed in practice
+        // that Bukkit.getWorldContainer() + worldName is NOT a safe assumption on every
+        // setup (Paper nested this project's worlds under
+        // world/dimensions/minecraft/<name>/ on a real deployment, not <container>/<name>/
+        // as this class originally assumed - the wipe "succeeded" every time while
+        // deleting nothing at all). Must be captured now, while the world is still loaded
+        // - it can't be asked again once unloaded.
+        File worldFolder = world != null
+                ? world.getWorldFolder()
+                : new File(Bukkit.getWorldContainer(), name); // best-effort guess only - see below
         if (world != null) {
             World safeWorld = Bukkit.getWorlds().get(0);
             for (Player player : world.getPlayers()) {
@@ -230,10 +268,15 @@ public final class FlatlandsService {
                         NamedTextColor.RED));
                 return;
             }
+        } else {
+            plugin.getLogger().warning("[wipeflatlands] The flatlands world wasn't loaded when the wipe was"
+                    + " requested - falling back to a best-effort guessed folder path ("
+                    + worldFolder.getAbsolutePath() + "), which is not guaranteed correct. This should be rare -"
+                    + " ensureWorldExists() runs on every boot, so the world is normally already loaded.");
         }
 
         dbExecutor.submit(() -> {
-            deleteWorldFolderRecursively(new File(Bukkit.getWorldContainer(), name));
+            deleteWorldFolderRecursively(worldFolder);
             Bukkit.getScheduler().runTask(plugin, () -> {
                 if (Bukkit.getWorld(name) != null) {
                     // Belt-and-suspenders against the same class of silent no-op as above:
@@ -281,6 +324,15 @@ public final class FlatlandsService {
      * restart habit already is remains in charge of the next boot, same as TFM.</p>
      */
     private void performShutdownWipe(String name) {
+        // Captured now, while the world is still loaded (World#getWorldFolder() is the
+        // only authoritative source for its real location - see the in-place branch of
+        // #performWipe for the full rationale) - by the time initializeWorld() runs at
+        // next boot to actually delete this, nothing is loaded yet to ask again.
+        World world = Bukkit.getWorld(name);
+        String folderPath = world != null
+                ? world.getWorldFolder().getAbsolutePath()
+                : new File(Bukkit.getWorldContainer(), name).getAbsolutePath(); // best-effort guess only
+
         Component notice = Component.text(
                 "The server is going offline for a flatlands wipe - come back in a few minutes.",
                 NamedTextColor.GOLD);
@@ -291,7 +343,7 @@ public final class FlatlandsService {
 
         dbExecutor.submit(() -> {
             try {
-                worldStateDao.setPendingWipe(name, true);
+                worldStateDao.setPendingWipe(name, true, folderPath);
             } catch (SQLException e) {
                 plugin.getLogger().log(Level.WARNING,
                         "Failed to persist a pending flatlands wipe flag - shutting down anyway, but the wipe"
@@ -329,21 +381,38 @@ public final class FlatlandsService {
         }
     }
 
+    /**
+     * Deletes {@code worldFolder} and everything under it. Always logs something -
+     * "doesn't exist" and "deleted N file(s)" used to look identical (silence) in the
+     * log, which is exactly how a previous, real path-resolution bug ({@code
+     * worldFolder} pointing somewhere the world's data never actually was) went
+     * unnoticed: every wipe "succeeded" with zero errors while deleting nothing at all.
+     */
     private void deleteWorldFolderRecursively(File worldFolder) {
         if (!worldFolder.exists()) {
+            plugin.getLogger().warning("[wipeflatlands] Expected world folder does not exist at "
+                    + worldFolder.getAbsolutePath() + " - nothing to delete. If the world is definitely still"
+                    + " there, this means the folder is somewhere other than this path was told to look.");
             return;
         }
+        int[] counts = {0, 0}; // {deleted, failed}
         try (java.util.stream.Stream<Path> paths = Files.walk(worldFolder.toPath())) {
             paths.sorted(Comparator.reverseOrder()).forEach(path -> {
                 try {
                     Files.delete(path);
+                    counts[0]++;
                 } catch (IOException e) {
+                    counts[1]++;
                     plugin.getLogger().log(Level.WARNING, "Failed to delete " + path + " during flatlands wipe", e);
                 }
             });
         } catch (IOException e) {
             plugin.getLogger().log(Level.WARNING, "Failed to walk flatlands world folder for deletion", e);
+            return;
         }
+        plugin.getLogger().info("[wipeflatlands] Deleted " + counts[0] + " file(s)/folder(s) under "
+                + worldFolder.getAbsolutePath() + (counts[1] > 0 ? (", " + counts[1] + " failed - see above") : "")
+                + ".");
     }
 
     /** Persists the wipe timestamp, then schedules the next autowipe cycle if enabled. */

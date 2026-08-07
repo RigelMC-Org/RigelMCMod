@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import java.util.Optional;
 import javax.sql.DataSource;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /** Synchronous JDBC access to {@code rigel_world_state} - currently just last-wipe timestamps. */
 public final class WorldStateDao {
@@ -76,14 +77,43 @@ public final class WorldStateDao {
     }
 
     /**
+     * @return the world folder path recorded alongside a pending restart-based wipe (see
+     *     {@link #setPendingWipe}'s javadoc for why this is persisted rather than
+     *     recomputed from {@code worldName} alone), if any. Empty for a world with no row,
+     *     no pending wipe, or a pending wipe set before this column existed.
+     */
+    @NotNull
+    public Optional<String> findPendingWipeFolder(@NotNull String worldName) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT pending_wipe_folder FROM rigel_world_state WHERE world_name = ?")) {
+            statement.setString(1, worldName);
+            try (ResultSet rs = statement.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                String folder = rs.getString("pending_wipe_folder");
+                return Optional.ofNullable(folder);
+            }
+        }
+    }
+
+    /**
      * Same insert-or-update shape as {@link #setLastWipeAt} - {@code worldName} may not
      * have a row yet either way. {@code last_wipe_at} is {@code NOT NULL} with no default,
      * so the insert branch has to supply <i>something</i> for it too; uses "now" rather
      * than {@code 0} specifically so it doesn't make {@link #findLastWipeAt} look like the
      * world was last wiped at the Unix epoch and trick {@code scheduleAutowipeCycle}'s
      * cadence math into thinking an autowipe is overdue immediately after this call.
+     *
+     * @param folderPath the world's real, resolved folder ({@code World#getWorldFolder()}
+     *     - the only authoritative source, confirmed in practice that {@code
+     *     Bukkit.getWorldContainer() + worldName} is not a safe assumption on every setup),
+     *     captured while the world was still loaded to ask. Pass {@code null} when clearing
+     *     the flag ({@code pending = false}) - nothing reads it in that state.
      */
-    public void setPendingWipe(@NotNull String worldName, boolean pending) throws SQLException {
+    public void setPendingWipe(@NotNull String worldName, boolean pending, @Nullable String folderPath)
+            throws SQLException {
         try (Connection connection = dataSource.getConnection()) {
             connection.setAutoCommit(false);
             try {
@@ -97,17 +127,21 @@ public final class WorldStateDao {
                 }
                 if (exists) {
                     try (PreparedStatement statement = connection.prepareStatement(
-                            "UPDATE rigel_world_state SET pending_wipe = ? WHERE world_name = ?")) {
+                            "UPDATE rigel_world_state SET pending_wipe = ?, pending_wipe_folder = ?"
+                                    + " WHERE world_name = ?")) {
                         statement.setInt(1, pending ? 1 : 0);
-                        statement.setString(2, worldName);
+                        statement.setString(2, folderPath);
+                        statement.setString(3, worldName);
                         statement.executeUpdate();
                     }
                 } else {
                     try (PreparedStatement statement = connection.prepareStatement(
-                            "INSERT INTO rigel_world_state (pending_wipe, last_wipe_at, world_name) VALUES (?, ?, ?)")) {
+                            "INSERT INTO rigel_world_state (pending_wipe, pending_wipe_folder, last_wipe_at,"
+                                    + " world_name) VALUES (?, ?, ?, ?)")) {
                         statement.setInt(1, pending ? 1 : 0);
-                        statement.setLong(2, System.currentTimeMillis());
-                        statement.setString(3, worldName);
+                        statement.setString(2, folderPath);
+                        statement.setLong(3, System.currentTimeMillis());
+                        statement.setString(4, worldName);
                         statement.executeUpdate();
                     }
                 }

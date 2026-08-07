@@ -1,0 +1,13 @@
+-- RigelMCMod schema v10: persist the resolved world-folder path alongside a pending
+-- restart-based flatlands wipe.
+--
+-- Bukkit.getWorldContainer() + world-name is not a reliable way to reconstruct a world's
+-- real on-disk location - confirmed in practice on a real deployment: Paper nested this
+-- project's worlds (and even its own default overworld/nether/end) under
+-- world/dimensions/minecraft/<name>/, not <container>/<name>/ as originally assumed, and
+-- the wipe silently deleted nothing every time as a result, with no error anywhere. The
+-- one authoritative source for a world's real folder is the loaded World object itself
+-- (World#getWorldFolder()) - captured here at the moment a restart-based wipe is
+-- requested (while the world is still loaded), then read back and used for deletion at
+-- the next boot, before that authoritative source exists again to ask.
+ALTER TABLE rigel_world_state ADD COLUMN pending_wipe_folder TEXT;
