@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>RigelMC - Mutes</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface-1: #fcfcfb; --text-primary: #0b0b0b; --text-secondary: #52514e;
+    --muted: #898781; --gridline: #e1e0d9; --baseline: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --accent-strong: #eda100; --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #ffffff; --text-secondary: #c3c2b7;
+      --muted: #898781; --gridline: #2c2c2a; --baseline: #383835; --border: rgba(255,255,255,0.10);
+      --accent-strong: #eda100; --critical: #e66767;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--page); color: var(--text-primary); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { padding: 20px 16px 48px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; margin-bottom: 12px; }
+  header.top h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  header.top h1 .brand { color: var(--accent-strong); }
+  .meta-row { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+  #refreshBtn { font: inherit; font-size: 13px; color: var(--text-secondary); background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  #refreshBtn:hover { color: var(--text-primary); border-color: var(--baseline); }
+  nav.pagenav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+  nav.pagenav a { font-size: 13px; font-weight: 600; text-decoration: none; color: var(--text-secondary); background: var(--surface-1); border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px; }
+  nav.pagenav a:hover { color: var(--text-primary); border-color: var(--baseline); }
+  nav.pagenav a.active { color: var(--page); background: var(--accent-strong); border-color: var(--accent-strong); }
+  .errbar { display: none; align-items: center; gap: 8px; background: var(--surface-1); border: 1px solid var(--critical); color: var(--critical); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .errbar.show { display: flex; }
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px 6px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 10px; font-size: 14px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; }
+  .panel h2 .count { font-weight: 500; color: var(--muted); font-size: 12px; }
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--gridline); white-space: nowrap; }
+  td.reason { white-space: normal; min-width: 160px; color: var(--text-secondary); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  tbody tr:last-child td { border-bottom: none; }
+  .when { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+  .empty { color: var(--muted); font-size: 13px; padding: 12px 0 16px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1><span class="brand">RigelMC</span> - Web Dashboard</h1>
+    <div class="meta-row"><button id="refreshBtn" type="button">Refresh</button></div>
+  </header>
+  <nav class="pagenav">
+    <a href="/status">Status</a>
+    <a href="/players">Players</a>
+    <a href="/bans">Bans</a>
+    <a href="/mutes" class="active">Mutes</a>
+    <a href="/schematics">Schematics</a>
+  </nav>
+  <div class="errbar" id="errbar"><span>Couldn't reach the server — showing the last known data. Retrying…</span></div>
+
+  <div class="panel">
+    <h2>Current mutes <span class="count" id="mutesCount"></span></h2>
+    <div class="tablewrap">
+      <table id="mutesTable">
+        <thead><tr><th>Target</th><th class="reason">Reason</th><th>Created</th><th>Expires</th></tr></thead>
+        <tbody id="mutesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>RigelMCMod webpanel &middot; read-only, no login required &middot; auto-refreshing every 5s</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var els = { errbar: document.getElementById("errbar"), mutesBody: document.getElementById("mutesBody"), mutesCount: document.getElementById("mutesCount"), refreshBtn: document.getElementById("refreshBtn") };
+  var POLL_MS = 5000;
+
+  function esc(s) {
+    var d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+
+  function formatWhen(epochMs) {
+    if (epochMs == null) return "Permanent";
+    var dt = new Date(epochMs);
+    if (isNaN(dt.getTime())) return "—";
+    return dt.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function renderMutes(list) {
+    els.mutesCount.textContent = list.length;
+    if (!list.length) {
+      els.mutesBody.innerHTML = '<tr><td colspan="4" class="empty">No active mutes</td></tr>';
+      return;
+    }
+    els.mutesBody.innerHTML = list.map(function (m) {
+      return '<tr>' +
+        '<td>' + esc(m.target) + '</td>' +
+        '<td class="reason">' + esc(m.reason || "—") + '</td>' +
+        '<td class="when">' + formatWhen(m.createdAt) + '</td>' +
+        '<td class="when">' + formatWhen(m.expiresAt) + '</td>' +
+        '</tr>';
+    }).join("");
+  }
+
+  function refresh() {
+    fetch("/api/mutes", { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("mutes -> " + r.status);
+      return r.json();
+    }).then(function (data) {
+      renderMutes(data);
+      els.errbar.classList.remove("show");
+    }).catch(function () { els.errbar.classList.add("show"); });
+  }
+
+  els.refreshBtn.addEventListener("click", refresh);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) refresh(); });
+  refresh();
+  setInterval(function () { if (!document.hidden) refresh(); }, POLL_MS);
+})();
+</script>
+</body>
+</html>

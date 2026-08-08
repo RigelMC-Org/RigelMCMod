@@ -68,7 +68,6 @@ public final class DiscordModule implements PluginModule {
         plugin.getServer()
                 .getPluginManager()
                 .registerEvents(new PublicChatBridgeListener(botManager), plugin);
-        plugin.getLogger().addHandler(new ConsoleRelayHandler(botManager));
     }
 
     @Override

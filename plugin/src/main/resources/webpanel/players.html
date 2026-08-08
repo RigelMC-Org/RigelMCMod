@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>RigelMC - Players</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface-1: #fcfcfb; --text-primary: #0b0b0b; --text-secondary: #52514e;
+    --muted: #898781; --gridline: #e1e0d9; --baseline: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --good: #0ca30c; --accent-strong: #eda100; --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #ffffff; --text-secondary: #c3c2b7;
+      --muted: #898781; --gridline: #2c2c2a; --baseline: #383835; --border: rgba(255,255,255,0.10);
+      --good: #0ca30c; --accent-strong: #eda100; --critical: #e66767;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--page); color: var(--text-primary); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { padding: 20px 16px 48px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; margin-bottom: 12px; }
+  header.top h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  header.top h1 .brand { color: var(--accent-strong); }
+  .meta-row { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+  #refreshBtn { font: inherit; font-size: 13px; color: var(--text-secondary); background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  #refreshBtn:hover { color: var(--text-primary); border-color: var(--baseline); }
+  nav.pagenav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+  nav.pagenav a { font-size: 13px; font-weight: 600; text-decoration: none; color: var(--text-secondary); background: var(--surface-1); border: 1px solid var(--border); border-radius: 7px; padding: 6px 12px; }
+  nav.pagenav a:hover { color: var(--text-primary); border-color: var(--baseline); }
+  nav.pagenav a.active { color: var(--page); background: var(--accent-strong); border-color: var(--accent-strong); }
+  .errbar { display: none; align-items: center; gap: 8px; background: var(--surface-1); border: 1px solid var(--critical); color: var(--critical); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+  .errbar.show { display: flex; }
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 760px) { .panels { grid-template-columns: 1fr; } }
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px 6px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 10px; font-size: 14px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; }
+  .panel h2 .count { font-weight: 500; color: var(--muted); font-size: 12px; }
+  .rowlist { list-style: none; margin: 0; padding: 0; }
+  .rowlist li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--gridline); font-size: 13px; }
+  .rowlist li:last-child { border-bottom: none; }
+  .who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .who .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.on { background: var(--good); }
+  .dot.off { background: var(--muted); opacity: 0.5; }
+  .pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; flex: none; }
+  .empty { color: var(--muted); font-size: 13px; padding: 12px 0 16px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1><span class="brand">RigelMC</span> - Web Dashboard</h1>
+    <div class="meta-row"><button id="refreshBtn" type="button">Refresh</button></div>
+  </header>
+  <nav class="pagenav">
+    <a href="/status">Status</a>
+    <a href="/players" class="active">Players</a>
+    <a href="/bans">Bans</a>
+    <a href="/mutes">Mutes</a>
+    <a href="/schematics">Schematics</a>
+  </nav>
+  <div class="errbar" id="errbar"><span>Couldn't reach the server — showing the last known data. Retrying…</span></div>
+
+  <section class="panels">
+    <div class="panel">
+      <h2>Online players <span class="count" id="playersCount"></span></h2>
+      <ul class="rowlist" id="playersList"></ul>
+    </div>
+    <div class="panel">
+      <h2>Staff roster <span class="count" id="staffCount"></span></h2>
+      <ul class="rowlist" id="staffList"></ul>
+    </div>
+  </section>
+
+  <footer>RigelMCMod webpanel &middot; read-only, no login required &middot; auto-refreshing every 5s</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var els = {
+    errbar: document.getElementById("errbar"),
+    playersList: document.getElementById("playersList"),
+    playersCount: document.getElementById("playersCount"),
+    staffList: document.getElementById("staffList"),
+    staffCount: document.getElementById("staffCount"),
+    refreshBtn: document.getElementById("refreshBtn")
+  };
+  var POLL_MS = 5000;
+
+  function esc(s) {
+    var d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+
+  function titleCase(id) {
+    if (!id) return "Default";
+    return id.split("_").map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
+  }
+
+  function renderPlayers(list) {
+    els.playersCount.textContent = list.length;
+    if (!list.length) {
+      els.playersList.innerHTML = '<li class="empty" style="border:none;">No players online</li>';
+      return;
+    }
+    els.playersList.innerHTML = list.map(function (p) {
+      return '<li><div class="who"><span class="name">' + esc(p.name) + '</span></div>' +
+        '<span class="pill">' + esc(titleCase(p.rank)) + '</span></li>';
+    }).join("");
+  }
+
+  function renderStaff(list) {
+    els.staffCount.textContent = list.length;
+    if (!list.length) {
+      els.staffList.innerHTML = '<li class="empty" style="border:none;">No staff configured</li>';
+      return;
+    }
+    var sorted = list.slice().sort(function (a, b) {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    els.staffList.innerHTML = sorted.map(function (s) {
+      return '<li><div class="who"><span class="dot ' + (s.online ? "on" : "off") + '"></span>' +
+        '<span class="name">' + esc(s.name) + '</span></div>' +
+        '<span class="pill">' + esc(titleCase(s.rank)) + '</span></li>';
+    }).join("");
+  }
+
+  function refresh() {
+    Promise.allSettled([
+      fetch("/api/players", { cache: "no-store" }).then(function (r) { return r.json(); }),
+      fetch("/api/staff", { cache: "no-store" }).then(function (r) { return r.json(); })
+    ]).then(function (results) {
+      var anyOk = false;
+      if (results[0].status === "fulfilled") { renderPlayers(results[0].value); anyOk = true; }
+      if (results[1].status === "fulfilled") { renderStaff(results[1].value); anyOk = true; }
+      els.errbar.classList.toggle("show", !anyOk);
+    });
+  }
+
+  els.refreshBtn.addEventListener("click", refresh);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) refresh(); });
+  refresh();
+  setInterval(function () { if (!document.hidden) refresh(); }, POLL_MS);
+})();
+</script>
+</body>
+</html>

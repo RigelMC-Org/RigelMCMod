@@ -9,6 +9,7 @@ import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.entity.Player;
@@ -38,9 +39,9 @@ public final class CrashPacketListener extends PacketListenerAbstract {
 
     private final RigelMCMod plugin;
     private final PermissionGate permissionGate;
-    private final PerPlayerRateLimiter chatMessages = new PerPlayerRateLimiter(1_000);
-    private final PerPlayerRateLimiter commands = new PerPlayerRateLimiter(1_000);
-    private final PerPlayerRateLimiter movementPackets = new PerPlayerRateLimiter(1_000);
+    private final PerPlayerRateLimiter<UUID> chatMessages = new PerPlayerRateLimiter<>(1_000);
+    private final PerPlayerRateLimiter<UUID> commands = new PerPlayerRateLimiter<>(1_000);
+    private final PerPlayerRateLimiter<UUID> movementPackets = new PerPlayerRateLimiter<>(1_000);
 
     public CrashPacketListener(@NotNull RigelMCMod plugin, @NotNull PermissionGate permissionGate) {
         super(PacketListenerPriority.HIGH);
@@ -79,7 +80,7 @@ public final class CrashPacketListener extends PacketListenerAbstract {
         return player == null || permissionGate.hasAtLeastCached(player.getUniqueId(), "moderator");
     }
 
-    private void handleRateLimited(PacketReceiveEvent event, PerPlayerRateLimiter limiter, int maxPerSecond) {
+    private void handleRateLimited(PacketReceiveEvent event, PerPlayerRateLimiter<UUID> limiter, int maxPerSecond) {
         Player player = event.getPlayer();
         if (isExempt(player) || maxPerSecond <= 0) {
             return;

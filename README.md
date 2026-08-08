@@ -25,8 +25,10 @@ movement validator, command-spy/`/bookspy`); event- and packet-level crash-explo
 bridge; admin worlds with a guest system; the flatlands sandbox (CleanroomGenerator-backed
 for Eaglercraft/1.8-protocol compatibility, in-place wipe/autowipe by default with an
 opt-in restart-based mode, EssentialsX warp cleanup on wipe); disguise and skin bridges;
-the Discord bridge (Discord4J, account linking, rank-gated console-via-Discord);
-and a read-only web dashboard. See `docs/architecture.md` for the full roadmap — the one
+the Discord bridge (Discord4J, account linking, rank-gated console-via-Discord); a
+read-only, multi-page web dashboard; and a separate public ban-appeal web form with
+Discord Approve/Deny buttons (auto-unban on approval). See `docs/architecture.md` for the
+full roadmap — the one
 remaining tracked item is Sub-phase F2 (`fun/`: jump pads, landmines, novelty guns,
 particle trails, novelty/troll commands), not yet built. Still under active hardening as
 issues surface from real-world use.
@@ -107,7 +109,7 @@ after your first boot:
 
 | Command | Does |
 |---|---|
-| `/ban <player> [reason]` | 24h ban, automatic CoreProtect rollback if installed |
+| `/ban <player> [reason]` (alias `/gtfo`) | 24h ban, automatic CoreProtect rollback if installed. Also bans the target's current (or most-recently-seen) IP alongside the name, linked as one case (`/punish unban <name> -c` lifts both) |
 | `/tban <player> <duration> [reason] [-r]` | Custom-duration ban, opt-in rollback |
 | `/permban <name\|ip> [reason]` | Permanent ban, cascades to every name/IP the target has ever shared |
 | `/unban <name\|ip> [-c]` (alias `/punish unban`) | Lifts a ban issued by `/ban`, `/tban`, or `/permban`; `-c` lifts the whole permban cascade case. Deliberately shadows Essentials' own `/unban` |
@@ -119,7 +121,7 @@ after your first boot:
 | `/announce <message>` | One-off server-wide broadcast, MiniMessage-formatted (colors, gradients, etc.) |
 | `/rvanish` | Vanish, hidden from regular players *and* non-staff auto-op'd players (Moderator+) |
 | `/op [player]` / `/opall` / `/deop <player>` / `/deopall` | `/op` is open to everyone (self or another online player) — vanilla op status carries no RigelMCMod rank of its own. `/opall`/`/deop`/`/deopall` are Moderator+ |
-| `/lockdown [on\|off]` | **Console/RCON only.** While enabled, only Moderator+ may join — session-only, always starts off |
+| `/lockdown [on\|off]` | **Admin+, in-game or console/RCON.** While enabled, only Moderator+ may join — session-only, always starts off |
 | `/mobpurge [radius]` (alias `/mp`) / `/entitywipe [radius]` (alias `/ew`) | Remove living non-player entities / dropped items+orbs+stuck projectiles. Moderator+, public broadcast |
 | `/freeze [on\|off\|purge]` (alias `/fr`) / `/freeze <player> [on\|off]` / `/freezeall` | Senior Admin+. Bare `/freeze` (and `/freezeall`) toggles a global freeze on every online player, matching TFM |
 | `/smite <player> [reason]` | Senior Admin+. Deop, survival, clear inventory, 3×3 lightning strike, kill — matches TFM's `Command_smite` |
@@ -290,10 +292,36 @@ integration testing.
 ## The web panel
 
 RigelMCMod ships an optional, **off-by-default**, read-only web dashboard (player stats,
-active bans, permban cascade cases) on its own port. It is disabled by default, binds to
-`127.0.0.1` when enabled, and requires a bearer token. If you expose it beyond localhost,
-put it behind your own reverse proxy with TLS. See `modules.webpanel` and the `webpanel`
-section in `config.yml`.
+active bans, permban cascade cases, schematics) on its own port, split across a few small
+pages: `/status`, `/players`, `/bans`, `/mutes`, `/schematics`. It is disabled by default,
+binds to `127.0.0.1` when enabled, and has **no authentication at all** — every endpoint is
+read-only, so there's nothing to authenticate or CSRF-protect; the security boundary is the
+module being off by default plus binding to localhost, not a token. If you expose it beyond
+localhost, put it behind your own reverse proxy with TLS. See `modules.webpanel` and the
+`webpanel` section in `config.yml`.
+
+## Ban appeals
+
+A second, **separate**, off-by-default web server for a public ban-appeal form
+(`modules.appeal`, `appeal` section in `config.yml`) — deliberately its own port/process
+from the read-only panel above, since this one accepts public form submissions rather than
+only serving GET requests, and meant to live on its **own dedicated subdomain**
+(e.g. `appeals.rigelmc.org`, not a path under another site — so its routes sit at the domain
+root, no path-rewriting needed in your reverse proxy). A banned player's kick screen shows
+a clickable appeal link (once `web.appeal.public-url` is set, e.g.
+`https://appeals.your-domain.com`) pointing at `GET /?case=<ref>`. A visitor who didn't
+follow that exact link can instead land on `GET /` (no params) and search by their
+Minecraft username — it resolves to their current active ban automatically, same appeal
+form either way. Submitting posts the appeal to a configured Discord channel
+(`discord.appeal-channel-id`, falls back to `discord.admin-channel-id`) with
+**Approve**/**Deny** buttons — approving auto-unbans, both require a linked Discord account
+at least `discord.appeal-decision-min-rank` (default Moderator). `GET /status?id=<id>` lets
+an appellant check their submission's status afterward. Binds to `127.0.0.1` by default —
+meant to sit behind your own reverse proxy (which is what actually answers your real
+subdomain and terminates TLS), not to be exposed directly. If you're behind **Cloudflare**,
+set `appeal.client-ip-header` to `CF-Connecting-IP` (defaults to the more generic
+`X-Forwarded-For`) so per-submitter rate limiting sees real visitor IPs instead of
+Cloudflare's own.
 
 ## License
 

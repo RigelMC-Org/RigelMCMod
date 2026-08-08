@@ -38,10 +38,12 @@ public final class RigelConfig {
     /**
      * @param moduleId a module's {@link PluginModule#id()}
      * @return whether {@code modules.<moduleId>.enabled} is set, defaulting to {@code true}
-     *     for every module except {@code webpanel}, which is opt-in
+     *     for every module except {@code webpanel} and {@code appeal}, both opt-in - each
+     *     stands up its own network-facing {@code HttpServer}, which shouldn't silently
+     *     start listening on an upgrade with no explicit choice to enable it
      */
     public boolean isModuleEnabled(@NotNull String moduleId) {
-        boolean defaultValue = !"webpanel".equals(moduleId);
+        boolean defaultValue = !"webpanel".equals(moduleId) && !"appeal".equals(moduleId);
         return source.getBoolean("modules." + moduleId + ".enabled", defaultValue);
     }
 
@@ -838,15 +840,75 @@ public final class RigelConfig {
         return source.getString("discord.console-channel-id", "");
     }
 
-    /** Minimum rank id allowed to execute console commands via the admin Discord channel. */
+    /** Minimum rank id allowed to execute console commands via the admin/console Discord channel. */
     @NotNull
     public String discordConsoleCommandMinRank() {
         return source.getString("discord.console-command-min-rank", "senior_admin");
     }
 
+    /**
+     * @return {@code discord.console-relay-min-level} - the minimum Log4j2 severity
+     *     ({@code TRACE}/{@code DEBUG}/{@code INFO}/{@code WARN}/{@code ERROR}/{@code
+     *     FATAL}) mirrored to {@code discord.console-channel-id} by {@code
+     *     discord.ServerLogAppender}. Passed through {@link
+     *     org.apache.logging.log4j.Level#toLevel(String, org.apache.logging.log4j.Level)},
+     *     which already falls back to {@code INFO} for anything unrecognized - default
+     *     here is also {@code INFO}, since {@code DEBUG}/{@code TRACE} on a full-server
+     *     mirror would generally be unusably noisy.
+     */
+    @NotNull
+    public String discordConsoleRelayMinLevel() {
+        return source.getString("discord.console-relay-min-level", "INFO");
+    }
+
+    /**
+     * @return {@code discord.console-channel-executes-messages} - whether a plain (non-
+     *     slash-command) message posted in {@code discord.console-channel-id} by a linked,
+     *     ranked user is itself dispatched as a console command (TFM-style, user-
+     *     requested "full console bridge"). Defaults to {@code true}; set {@code false} to
+     *     fall back to {@code /console}-only execution while keeping the full mirror.
+     *     Deliberately has no effect on the admin channel - see {@code
+     *     DiscordBotManager#handleMessage}'s own comment on why that's never allowed to
+     *     double as a command channel.
+     */
+    public boolean discordConsoleChannelExecutesMessages() {
+        return source.getBoolean("discord.console-channel-executes-messages", true);
+    }
+
     @NotNull
     public Duration discordLinkCodeTtl() {
         return Duration.ofMinutes(source.getLong("discord.link-code-ttl-minutes", 5));
+    }
+
+    /**
+     * @return {@code discord.command-guild-id} - if set, {@code /link}/{@code /console}
+     *     are registered to this one guild instead of globally. Global registration (the
+     *     blank default) can take up to an hour to actually appear on Discord's side - a
+     *     real platform limitation, not a bug - whereas guild-scoped registration
+     *     propagates near-instantly, at the cost of only working in that one guild. Meant
+     *     as a testing aid: set it while actively iterating, blank it back out for a real
+     *     deployment across (or before knowing) every guild the bot might be in.
+     */
+    @NotNull
+    public String discordCommandGuildId() {
+        return source.getString("discord.command-guild-id", "");
+    }
+
+    /**
+     * @return {@code discord.appeal-channel-id} - where ban-appeal Approve/Deny messages
+     *     are posted. Falls back to {@link #discordAdminChannelId()} when blank, so a
+     *     server doesn't need a second channel just to try the appeal feature.
+     */
+    @NotNull
+    public String discordAppealChannelId() {
+        String configured = source.getString("discord.appeal-channel-id", "");
+        return configured.isBlank() ? discordAdminChannelId() : configured;
+    }
+
+    /** Minimum rank id allowed to click Approve/Deny on a posted ban appeal. */
+    @NotNull
+    public String discordAppealDecisionMinRank() {
+        return source.getString("discord.appeal-decision-min-rank", "moderator");
     }
 
     public boolean webPanelEnabled() {
@@ -881,6 +943,72 @@ public final class RigelConfig {
     @NotNull
     public String webPanelSchematicsDirectory() {
         return source.getString("webpanel.schematics.directory", "");
+    }
+
+    // ---- appeal.* - public ban-appeal web form (modules.appeal.enabled, opt-in) --------
+
+    public boolean appealEnabled() {
+        return isModuleEnabled("appeal");
+    }
+
+    public int appealPort() {
+        return source.getInt("appeal.port", 8082);
+    }
+
+    /**
+     * @return {@code appeal.bind-address} - defaults to loopback, same as the web panel.
+     *     This server is meant to be reached through an operator-managed reverse proxy on
+     *     its own dedicated subdomain (which is what actually terminates TLS and answers
+     *     the real public domain, e.g. {@code appeals.rigelmc.org}) forwarding to this
+     *     local port, not by binding this process directly to a public interface.
+     */
+    @NotNull
+    public String appealBindAddress() {
+        return source.getString("appeal.bind-address", "127.0.0.1");
+    }
+
+    /**
+     * @return {@code web.appeal.public-url} - the externally-visible base URL (e.g.
+     *     {@code https://appeals.rigelmc.org} - its own dedicated subdomain, not a path
+     *     under another site) used to build the clickable appeal link shown on a ban's
+     *     kick screen ({@code punish.ban.BanEnforcementListener}). Blank by default - no
+     *     link is shown at all until this is explicitly configured, rather than ever
+     *     showing a link that doesn't actually go anywhere real.
+     */
+    @NotNull
+    public String appealPublicUrl() {
+        return source.getString("web.appeal.public-url", "");
+    }
+
+    /** @return max character length accepted for an appeal's written message. */
+    public int appealMaxMessageLength() {
+        return source.getInt("appeal.max-message-length", 1000);
+    }
+
+    /** @return the sliding-window size (minutes) for per-submitter-IP appeal rate limiting. */
+    public long appealRateLimitWindowMinutes() {
+        return source.getLong("appeal.rate-limit-window-minutes", 60);
+    }
+
+    /** @return max appeal submissions allowed per IP per window. 0/negative disables the check. */
+    public int appealRateLimitMaxPerWindow() {
+        return source.getInt("appeal.rate-limit-max-per-window", 1);
+    }
+
+    /**
+     * @return {@code appeal.client-ip-header} - the request header the appeal server
+     *     trusts for the real client IP (used for per-submitter rate limiting), instead of
+     *     the raw socket address - user-reported real deployment: Cloudflare in front of
+     *     this server needs {@code CF-Connecting-IP} specifically, not the generic {@code
+     *     X-Forwarded-For} most other reverse proxies set, hence configurable rather than
+     *     hardcoded. Defaults to {@code X-Forwarded-For} since that's the more broadly-
+     *     supported header across reverse proxies in general. Blank disables header
+     *     trust entirely, always using the raw socket address (only correct if this
+     *     server is somehow reachable with no proxy in front of it at all).
+     */
+    @NotNull
+    public String appealClientIpHeader() {
+        return source.getString("appeal.client-ip-header", "X-Forwarded-For");
     }
 
     @NotNull

@@ -26,8 +26,8 @@ public final class AntiSpamGuard implements Listener {
 
     private final RigelMCMod plugin;
     private final PermissionGate permissionGate;
-    private final PerPlayerRateLimiter chatMessages = new PerPlayerRateLimiter(10_000);
-    private final PerPlayerRateLimiter commands = new PerPlayerRateLimiter(10_000);
+    private final PerPlayerRateLimiter<UUID> chatMessages = new PerPlayerRateLimiter<>(10_000);
+    private final PerPlayerRateLimiter<UUID> commands = new PerPlayerRateLimiter<>(10_000);
     private final Map<UUID, RepeatTracker> repeats = new ConcurrentHashMap<>();
 
     public AntiSpamGuard(@NotNull RigelMCMod plugin, @NotNull PermissionGate permissionGate) {

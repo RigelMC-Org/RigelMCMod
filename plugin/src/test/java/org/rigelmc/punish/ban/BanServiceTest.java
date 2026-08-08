@@ -1,9 +1,10 @@
 package org.rigelmc.punish.ban;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
 import com.zaxxer.hikari.HikariDataSource;
 import java.util.List;
@@ -61,6 +62,32 @@ class BanServiceTest {
             int revoked = banService.unban("NeverBanned", null, false, null, System.currentTimeMillis());
             assertEquals(0, revoked);
         });
+    }
+
+    @Test
+    void banByNameAndIpBansBothTogether() throws Exception {
+        UUID uuid = UUID.randomUUID();
+        long now = System.currentTimeMillis();
+
+        List<Ban> created = banService.banByNameAndIp(uuid, "Griefer2", "iphash-quickban", "test", null, now, now + 1000);
+
+        assertEquals(2, created.size()); // 1 name entry + 1 IP entry
+        String caseId = created.get(0).caseId();
+        assertTrue(caseId != null && caseId.equals(created.get(1).caseId()));
+        assertTrue(banService.isBanned(uuid, now));
+        assertTrue(banService.isIpBanned("iphash-quickban", now));
+    }
+
+    @Test
+    void banByNameAndIpWithNoKnownIpBansNameOnly() throws Exception {
+        UUID uuid = UUID.randomUUID();
+        long now = System.currentTimeMillis();
+
+        List<Ban> created = banService.banByNameAndIp(uuid, "Griefer3", null, "test", null, now, now + 1000);
+
+        assertEquals(1, created.size()); // name entry only, no IP to ban
+        assertNull(created.get(0).caseId());
+        assertTrue(banService.isBanned(uuid, now));
     }
 
     @Test

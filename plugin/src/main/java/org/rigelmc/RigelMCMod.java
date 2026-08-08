@@ -14,6 +14,7 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 import org.rigelmc.announce.AnnounceModule;
+import org.rigelmc.appeal.AppealModule;
 import org.rigelmc.api.ban.BanProvider;
 import org.rigelmc.api.rank.RankProvider;
 import org.rigelmc.audit.AuditLogDao;
@@ -69,6 +70,8 @@ import org.rigelmc.protect.area.ProtectAreaService;
 import org.rigelmc.protect.worldedit.WorldEditProtectModule;
 import org.rigelmc.webpanel.WebPanelModule;
 import org.rigelmc.punish.PunishModule;
+import org.rigelmc.punish.appeal.AppealDao;
+import org.rigelmc.punish.appeal.AppealService;
 import org.rigelmc.punish.ban.BanDao;
 import org.rigelmc.punish.ban.BanEnforcementListener;
 import org.rigelmc.punish.ban.BanProviderImpl;
@@ -322,12 +325,16 @@ public final class RigelMCMod extends JavaPlugin {
         PermissionGate permissionGate = new PermissionGate(this, rankService);
         permissionGate.registerKnownPermissions();
 
-        BanService banService = new BanService(new BanDao(dataSource), playerDao, ipHistoryDao, auditLogService);
+        BanDao banDao = new BanDao(dataSource);
+        BanService banService = new BanService(banDao, playerDao, ipHistoryDao, auditLogService);
         MuteService muteService = new MuteService(new MuteDao(dataSource), auditLogService);
         CoreProtectBridge coreProtectBridge = new CoreProtectBridge(getLogger());
 
         DiscordLinkService discordLinkService = new DiscordLinkService(new DiscordLinkDao(dataSource));
         DiscordBotManager discordBotManager = new DiscordBotManager(getLogger());
+        AppealService appealService =
+                new AppealService(this, new AppealDao(dataSource), banDao, playerDao, auditLogService, discordBotManager);
+        discordBotManager.setAppealService(appealService);
 
         FlatlandsService flatlandsService = new FlatlandsService(this, new WorldStateDao(dataSource), dbExecutor);
         AdminWorldService adminWorldService = new AdminWorldService(this, permissionGate);
@@ -367,7 +374,7 @@ public final class RigelMCMod extends JavaPlugin {
 
         getServer()
                 .getPluginManager()
-                .registerEvents(new BanEnforcementListener(banService, ipHasher, getLogger()), this);
+                .registerEvents(new BanEnforcementListener(banService, banDao, ipHasher, rigelConfig(), getLogger()), this);
         getServer()
                 .getPluginManager()
                 .registerEvents(
@@ -410,10 +417,10 @@ public final class RigelMCMod extends JavaPlugin {
         built.add(new SkinModule());
         built.add(new InvestigateModule(permissionGate, new SpyService(), playerDao, ipHistoryDao, ipHasher, dbExecutor));
         built.add(new WebPanelModule(
-                playerDao, new BanDao(dataSource), new MuteDao(dataSource), permissionGate, titleService,
-                dbExecutor));
+                playerDao, banDao, new MuteDao(dataSource), permissionGate, titleService, dbExecutor));
+        built.add(new AppealModule(appealService, ipHasher));
         built.add(new EntityCleanupModule(permissionGate));
-        built.add(new LockdownModule(rankService));
+        built.add(new LockdownModule(rankService, permissionGate));
         built.add(new TickFreezeModule(permissionGate));
         built.add(new FunModule(permissionGate));
         built.add(new SpawnMobModule(permissionGate));

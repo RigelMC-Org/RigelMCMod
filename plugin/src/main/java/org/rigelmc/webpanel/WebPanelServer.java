@@ -11,6 +11,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
@@ -32,22 +34,27 @@ import org.rigelmc.RigelMCMod;
  * main thread and from {@code RigelExecutors}' DB executor - a slow/stuck HTTP client can
  * never block gameplay or database access.</p>
  *
- * <p>Also serves a small static single-page dashboard (bundled resource {@code
- * webpanel/dashboard.html}) at every path not claimed by an {@code /api/*} context, so the
- * whole feature is reachable at just this one port/domain - no separate static-file
- * hosting needed. The page itself only ever calls back into this same server's {@code
- * /api/*} JSON endpoints (same-origin, so no CORS wrangling), which is also why fronting
- * this with a reverse proxy for TLS/a real domain is a single "proxy everything to this
- * port" rule rather than needing separate static + API upstreams.</p>
+ * <p>Serves {@link #PAGES} - one small static page each (bundled resources under {@code
+ * webpanel/}), rather than the single monolithic {@code dashboard.html} this used to be -
+ * user-requested, so each section (status, players, bans, mutes, schematics) gets its own
+ * URL instead of being one page's worth of JS-toggled sections. {@code "/"} itself redirects
+ * to {@code /status} rather than serving content directly. Every page only ever calls back
+ * into this same server's own {@code /api/*} JSON endpoints (unchanged by the split,
+ * same-origin, so no CORS wrangling), which is also why fronting this with a reverse proxy
+ * for TLS/a real domain is a single "proxy everything to this port" rule rather than needing
+ * separate static + API upstreams.</p>
  */
 public final class WebPanelServer {
+
+    /** Bundled resource {@code webpanel/<page>.html} for each - also each page's own URL path. */
+    private static final List<String> PAGES = List.of("status", "players", "bans", "mutes", "schematics");
 
     private final RigelMCMod plugin;
     private final WebPanelSnapshotService snapshotService;
     private final SchematicsService schematicsService;
     private HttpServer server;
     private ExecutorService requestExecutor;
-    private byte[] dashboardHtml = new byte[0];
+    private final Map<String, byte[]> pageHtml = new ConcurrentHashMap<>();
 
     public WebPanelServer(
             @NotNull RigelMCMod plugin, @NotNull WebPanelSnapshotService snapshotService,
@@ -74,7 +81,9 @@ public final class WebPanelServer {
         });
         server.setExecutor(requestExecutor);
 
-        dashboardHtml = loadDashboardHtml();
+        for (String page : PAGES) {
+            pageHtml.put(page, loadPageHtml(page));
+        }
 
         server.createContext("/api/status", exchange -> handle(exchange, this::statusJson));
         server.createContext("/api/players", exchange -> handle(exchange, this::playersJson));
@@ -88,9 +97,14 @@ public final class WebPanelServer {
             server.createContext("/api/schematics/list", exchange -> handle(exchange, this::schematicsJson));
             server.createContext("/api/schematics/download", this::handleSchematicDownload);
         }
+        for (String page : PAGES) {
+            server.createContext("/" + page, exchange -> handlePage(exchange, page));
+        }
         // Catch-all - HttpServer dispatches by longest matching prefix, so this only ever
-        // serves paths the specific /api/* contexts above didn't already claim.
-        server.createContext("/", this::handleDashboard);
+        // serves paths the specific contexts above didn't already claim. Redirects to the
+        // first real page rather than serving content directly at "/" - see class javadoc
+        // for why this is now several small pages instead of one single-page dashboard.
+        server.createContext("/", this::handleRoot);
 
         server.start();
         plugin.getLogger()
@@ -106,30 +120,46 @@ public final class WebPanelServer {
         }
     }
 
-    /** Reads the bundled dashboard page once at startup - static content, never changes per-request. */
-    private static byte[] loadDashboardHtml() {
-        try (InputStream in = WebPanelServer.class.getClassLoader().getResourceAsStream("webpanel/dashboard.html")) {
+    /** Reads one bundled page once at startup - static content, never changes per-request. */
+    private static byte[] loadPageHtml(String page) {
+        try (InputStream in =
+                WebPanelServer.class.getClassLoader().getResourceAsStream("webpanel/" + page + ".html")) {
             return in == null ? new byte[0] : in.readAllBytes();
         } catch (IOException e) {
             return new byte[0];
         }
     }
 
-    /** Serves the static single-page dashboard - GET-only, same read-only/no-auth rationale as every /api/* handler. */
-    private void handleDashboard(HttpExchange exchange) throws IOException {
+    /** "/" itself has no content of its own - redirects to the status overview page. */
+    private void handleRoot(HttpExchange exchange) throws IOException {
+        try {
+            if (!"/".equals(exchange.getRequestURI().getPath())) {
+                exchange.sendResponseHeaders(404, -1);
+                return;
+            }
+            exchange.getResponseHeaders().add("Location", "/status");
+            exchange.sendResponseHeaders(302, -1);
+        } finally {
+            exchange.close();
+        }
+    }
+
+    /** Serves one static dashboard page - GET-only, same read-only/no-auth rationale as every /api/* handler. */
+    private void handlePage(HttpExchange exchange, String page) throws IOException {
         try {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
             }
-            if (dashboardHtml.length == 0) {
+            byte[] html = pageHtml.getOrDefault(page, new byte[0]);
+            if (html.length == 0) {
                 exchange.sendResponseHeaders(404, -1);
                 return;
             }
             exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
-            exchange.sendResponseHeaders(200, dashboardHtml.length);
+            exchange.sendResponseHeaders(200, html.length);
             try (OutputStream out = exchange.getResponseBody()) {
-                out.write(dashboardHtml);
+                out.write(html);
             }
         } finally {
             exchange.close();
