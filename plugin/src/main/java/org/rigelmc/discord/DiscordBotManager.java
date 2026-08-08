@@ -369,6 +369,24 @@ public final class DiscordBotManager {
     }
 
     /**
+     * User-requested: player join/leave posted to the public Discord channel (the
+     * "server chat bridge") and, separately, to the admin channel (the "staff chat
+     * bridge" - staff-only by virtue of who's actually in that channel, not an extra
+     * filter here). {@code includePublic} is {@code false} for a vanished player's leave
+     * (see {@code discord.JoinLeaveBridgeListener}) - the admin channel still gets it
+     * either way, since staff should know when a vanished colleague disconnects.
+     */
+    public void relayJoinLeave(@NotNull String message, boolean includePublic) {
+        String content = sanitize(message);
+        if (includePublic && publicChannel != null) {
+            publicChannel.createMessage(content).subscribe();
+        }
+        if (adminChannel != null) {
+            adminChannel.createMessage(content).subscribe();
+        }
+    }
+
+    /**
      * One-way: server log lines out to the console channel only, never accepts input
      * back. IP-redacted and sanitized (ANSI/legacy-color codes, mass mentions, length),
      * then handed to {@link #consoleRelayBatcher}, which groups it with whatever else

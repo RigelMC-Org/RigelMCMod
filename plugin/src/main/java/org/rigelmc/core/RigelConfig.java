@@ -875,6 +875,15 @@ public final class RigelConfig {
         return source.getBoolean("discord.console-channel-executes-messages", true);
     }
 
+    /**
+     * @return {@code discord.relay-join-leave} - user-requested: whether player join/leave
+     *     is posted to both the public Discord channel and the admin channel (see {@code
+     *     discord.JoinLeaveBridgeListener}). Default on.
+     */
+    public boolean discordRelayJoinLeave() {
+        return source.getBoolean("discord.relay-join-leave", true);
+    }
+
     @NotNull
     public Duration discordLinkCodeTtl() {
         return Duration.ofMinutes(source.getLong("discord.link-code-ttl-minutes", 5));

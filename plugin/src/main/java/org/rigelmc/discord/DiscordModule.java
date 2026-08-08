@@ -18,6 +18,7 @@ import org.rigelmc.core.PluginModule;
 import org.rigelmc.core.RigelConfig;
 import org.rigelmc.rank.PermissionGate;
 import org.rigelmc.rank.RankService;
+import org.rigelmc.vanish.VanishService;
 
 /**
  * The optional Discord bridge - see docs/architecture.md "Discord bridge & admin chat".
@@ -34,6 +35,7 @@ public final class DiscordModule implements PluginModule {
     private final PermissionGate permissionGate;
     private final AuditLogService auditLogService;
     private final ExecutorService dbExecutor;
+    private final VanishService vanishService;
     private RigelMCMod plugin;
 
     public DiscordModule(
@@ -42,13 +44,15 @@ public final class DiscordModule implements PluginModule {
             @NotNull RankService rankService,
             @NotNull PermissionGate permissionGate,
             @NotNull AuditLogService auditLogService,
-            @NotNull ExecutorService dbExecutor) {
+            @NotNull ExecutorService dbExecutor,
+            @NotNull VanishService vanishService) {
         this.linkService = linkService;
         this.botManager = botManager;
         this.rankService = rankService;
         this.permissionGate = permissionGate;
         this.auditLogService = auditLogService;
         this.dbExecutor = dbExecutor;
+        this.vanishService = vanishService;
     }
 
     @Override
@@ -68,6 +72,9 @@ public final class DiscordModule implements PluginModule {
         plugin.getServer()
                 .getPluginManager()
                 .registerEvents(new PublicChatBridgeListener(botManager), plugin);
+        plugin.getServer()
+                .getPluginManager()
+                .registerEvents(new JoinLeaveBridgeListener(botManager, plugin, vanishService), plugin);
     }
 
     @Override

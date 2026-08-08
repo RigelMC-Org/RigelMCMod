@@ -173,7 +173,7 @@ RigelMCMod/
 **`paper-plugin.yml` (draft):**
 ```yaml
 name: RigelMCMod
-version: '1.0.0-SNAPSHOT'
+version: '1.0.1'
 main: org.rigelmc.RigelMCMod
 bootstrapper: org.rigelmc.RigelBootstrap
 loader: org.rigelmc.RigelPluginLoader

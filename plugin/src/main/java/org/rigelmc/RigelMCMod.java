@@ -98,6 +98,7 @@ import org.rigelmc.rollback.CoreProtectBridge;
 import org.rigelmc.tag.TagModule;
 import org.rigelmc.tag.TagService;
 import org.rigelmc.vanish.VanishModule;
+import org.rigelmc.vanish.VanishService;
 import org.rigelmc.world.AdminWorldService;
 import org.rigelmc.world.FlatlandsService;
 import org.rigelmc.world.SpawnDao;
@@ -325,6 +326,11 @@ public final class RigelMCMod extends JavaPlugin {
         PermissionGate permissionGate = new PermissionGate(this, rankService);
         permissionGate.registerKnownPermissions();
 
+        // Constructed here (not owned privately by VanishModule, as it originally was) so
+        // discord.JoinLeaveBridgeListener can also query vanish state - a vanished staff
+        // member's leave shouldn't be announced to the public Discord channel.
+        VanishService vanishService = new VanishService();
+
         BanDao banDao = new BanDao(dataSource);
         BanService banService = new BanService(banDao, playerDao, ipHistoryDao, auditLogService);
         MuteService muteService = new MuteService(new MuteDao(dataSource), auditLogService);
@@ -396,14 +402,15 @@ public final class RigelMCMod extends JavaPlugin {
                 nameTagService));
         built.add(protectModule);
         built.add(new DiscordModule(
-                discordLinkService, discordBotManager, rankService, permissionGate, auditLogService, dbExecutor));
+                discordLinkService, discordBotManager, rankService, permissionGate, auditLogService, dbExecutor,
+                vanishService));
         built.add(new WorldModule(flatlandsService, adminWorldService, spawnService, permissionGate));
         built.add(new AnnounceModule(permissionGate));
         built.add(new AutoOpModule(permissionGate, prefixService, displayService));
         built.add(new RankAdminModule(
                 rankService, titleService, playerDao, permissionGate, prefixService, displayService, nameTagService,
                 vaultChatBridge, auditLogService, dbExecutor));
-        built.add(new VanishModule(permissionGate));
+        built.add(new VanishModule(vanishService, permissionGate));
         built.add(new MotdModule());
         built.add(new ScoreboardModule(scoreboardService));
         built.add(new TagModule(tagService, displayService));
