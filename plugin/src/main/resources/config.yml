@@ -82,6 +82,13 @@ modules:
     enabled: true
   webpanel:
     enabled: false
+  # The public ban-appeal form (appeals.rigelmc.org in production, its own dedicated
+  # subdomain) - off by default,
+  # same reasoning as webpanel above but more so: this one accepts public POST submissions,
+  # not just GET reads. See the appeal.* section below for its own settings, and
+  # discord.appeal-channel-id for where decisions get posted.
+  appeal:
+    enabled: false
   discord:
     enabled: false
   announce:
@@ -687,6 +694,39 @@ webpanel:
     # else (e.g. FAWE per-player-folder configs vary by install).
     directory: ""
 
+# The public ban-appeal form - off by default (see modules.appeal above). Unlike webpanel
+# above, this one accepts POST submissions from the public internet, so it's a deliberately
+# separate HTTP server (own port) with its own abuse-prevention (rate limiting, input caps,
+# active-ban validation) rather than folded into the read-only dashboard.
+appeal:
+  # Binds to localhost by default, same as webpanel - this is meant to sit behind your own
+  # reverse proxy (which is what actually answers your real public domain and terminates
+  # TLS), not to be reachable directly.
+  port: 8082
+  bind-address: "127.0.0.1"
+  max-message-length: 1000
+  # Per-submitter-IP throttling on POST /, since this is the first genuinely public,
+  # unauthenticated, write-capable thing this plugin has ever exposed.
+  rate-limit-window-minutes: 60
+  rate-limit-max-per-window: 1
+  # Which request header to trust for the real client IP (used for the rate limiting
+  # above) instead of the raw socket address, which behind any reverse proxy/CDN is just
+  # the proxy's own IP for every visitor. Default "X-Forwarded-For" (the header most
+  # reverse proxies set) - if you're behind Cloudflare specifically, set this to
+  # "CF-Connecting-IP" instead, which is what Cloudflare actually sets and is more
+  # trustworthy than X-Forwarded-For through their proxy chain. Blank disables header
+  # trust entirely (only correct with no proxy in front of this server at all).
+  client-ip-header: "X-Forwarded-For"
+
+# The externally-visible base URL for the appeal form (e.g. https://appeals.rigelmc.org -
+# its own dedicated subdomain, not a path under another site - whatever your reverse proxy
+# in front of appeal.port above actually answers on). Blank by default - no appeal link is
+# shown on a ban's kick screen at all until this is set, rather than ever showing a link
+# that doesn't actually go anywhere real.
+web:
+  appeal:
+    public-url: ""
+
 world:
   flatlands:
     # Name of the disposable superflat world /wipeflatlands manages. Created
@@ -765,15 +805,45 @@ discord:
   # Off by default - requires a bot token to do anything. See docs/architecture.md
   # "Discord bridge & admin chat" for the full design.
   bot-token: ""
-  # Three separate channel IDs. public/admin mirror chat both directions; console is
-  # one-way log output only. Leave blank to disable that specific bridge direction even
-  # if the module as a whole is enabled.
+  # Three separate channel IDs. public/admin mirror chat both directions. console-channel-id
+  # is the TFM-style full server console bridge - see the console-relay-min-level and
+  # console-channel-executes-messages entries below for what that actually does. Leave
+  # blank to disable that specific bridge direction even if the module as a whole is enabled.
   public-channel-id: ""
   admin-channel-id: ""
   console-channel-id: ""
-  # Only players linked via /discord link AND at least this rank may run console
-  # commands from the admin channel (via a "!"-prefixed message) - never from DMs,
-  # never from the public/console channels.
+  # Only players linked via /discord link AND at least this rank may run console commands
+  # via /console (usable in the admin channel or console-channel-id) or, if
+  # console-channel-executes-messages below is true, by posting plainly in
+  # console-channel-id. Never from DMs, never from the public channel.
   console-command-min-rank: senior_admin
+  # Minimum log severity mirrored into console-channel-id (TRACE/DEBUG/INFO/WARN/ERROR/
+  # FATAL) once that channel is set - the full server console, not just RigelMCMod's own
+  # log lines. DEBUG/TRACE on a full-server mirror is generally unusably noisy; only go
+  # that low temporarily while actively debugging something.
+  console-relay-min-level: INFO
+  # TFM-style: once console-channel-id is set, any plain (non-/console) message posted
+  # there by a linked, ranked user is itself dispatched as a console command, no "/console"
+  # needed - the channel effectively *is* your server console at that point. Set false to
+  # keep the full mirror above but require /console explicitly for anyone who'd rather not
+  # have "type anything here to run it as root on your server" active. Never applies to
+  # admin-channel-id, regardless of this setting - see DiscordBotManager's own comment on
+  # why that channel deliberately never doubles as a command channel.
+  console-channel-executes-messages: true
   # How long a /discord link one-time code stays valid before expiring unused.
   link-code-ttl-minutes: 5
+  # Leave blank for normal use: /link and /console register as GLOBAL slash commands,
+  # which can take up to an hour to actually show up in Discord after first connecting -
+  # a real Discord platform limitation, not a bug. While actively testing, set this to
+  # your Discord server's guild id (enable Discord's own Developer Mode, right-click your
+  # server icon -> Copy Server ID) to register them to just that guild instead - those
+  # propagate near-instantly. Switch back to blank once you're done iterating so the
+  # commands work in every guild the bot is ever added to, not just this one.
+  command-guild-id: ""
+  # Where ban-appeal Approve/Deny messages are posted (see appeal.* below and modules.appeal
+  # above). Falls back to admin-channel-id above if left blank, so trying the appeal
+  # feature doesn't require a second dedicated channel.
+  appeal-channel-id: ""
+  # Only a linked Discord account at least this rank may click Approve/Deny on a posted
+  # ban appeal.
+  appeal-decision-min-rank: moderator

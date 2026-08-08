@@ -1,5 +1,6 @@
 package org.rigelmc.protect.antigrief;
 
+import java.util.UUID;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -30,8 +31,8 @@ public final class AntiNukeGuard implements Listener {
 
     private final RigelMCMod plugin;
     private final PermissionGate permissionGate;
-    private final PerPlayerRateLimiter breaks = new PerPlayerRateLimiter(1_000);
-    private final PerPlayerRateLimiter places = new PerPlayerRateLimiter(1_000);
+    private final PerPlayerRateLimiter<UUID> breaks = new PerPlayerRateLimiter<>(1_000);
+    private final PerPlayerRateLimiter<UUID> places = new PerPlayerRateLimiter<>(1_000);
 
     public AntiNukeGuard(@NotNull RigelMCMod plugin, @NotNull PermissionGate permissionGate) {
         this.plugin = plugin;

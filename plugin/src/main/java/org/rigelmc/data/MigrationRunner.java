@@ -35,7 +35,9 @@ public final class MigrationRunner {
             new Migration(6, "V6__spawn.sql"),
             new Migration(7, "V7__myadmin.sql"),
             new Migration(8, "V8__protect_area.sql"),
-            new Migration(9, "V9__flatlands_restart_wipe.sql"));
+            new Migration(9, "V9__flatlands_restart_wipe.sql"),
+            new Migration(10, "V10__flatlands_wipe_folder.sql"),
+            new Migration(11, "V11__ban_appeals.sql"));
 
     private final Logger logger;
     private final boolean mysqlDialect;

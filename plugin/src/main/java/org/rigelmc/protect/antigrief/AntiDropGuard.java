@@ -1,5 +1,6 @@
 package org.rigelmc.protect.antigrief;
 
+import java.util.UUID;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -19,7 +20,7 @@ import org.rigelmc.RigelMCMod;
 public final class AntiDropGuard implements Listener {
 
     private final RigelMCMod plugin;
-    private final PerPlayerRateLimiter drops = new PerPlayerRateLimiter(10_000);
+    private final PerPlayerRateLimiter<UUID> drops = new PerPlayerRateLimiter<>(10_000);
 
     public AntiDropGuard(@NotNull RigelMCMod plugin) {
         this.plugin = plugin;

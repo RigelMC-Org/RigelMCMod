@@ -67,6 +67,25 @@ public final class BanDao {
         }
     }
 
+    /**
+     * @return the ban row with this exact primary key, regardless of active/expired
+     *     state - used by the ban-appeal flow, which needs to resolve a specific ban an
+     *     appellant is referencing (via {@code /ban}/{@code /tban}'s numeric id, since
+     *     only {@code /permban} cascades get a {@code caseId}) rather than "whatever's
+     *     currently active for this target" like {@link #findActiveByUuid}/{@link
+     *     #findActiveByIp} resolve.
+     */
+    @NotNull
+    public Optional<Ban> findById(long id) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement("SELECT * FROM rigel_bans WHERE id = ?")) {
+            statement.setLong(1, id);
+            try (ResultSet rs = statement.executeQuery()) {
+                return rs.next() ? Optional.of(mapRow(rs)) : Optional.empty();
+            }
+        }
+    }
+
     /** @return the most recent active, unexpired ban entry targeting this UUID by name, if any. */
     @NotNull
     public Optional<Ban> findActiveByUuid(UUID uuid, long nowEpochMillis) throws SQLException {

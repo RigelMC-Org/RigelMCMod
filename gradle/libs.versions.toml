@@ -25,6 +25,14 @@ worldedit = "7.3.10"
 # rather than reflection. From 2.19.0 onward EssentialsX publishes under the
 # net.essentialsx group id (previously net.ess3) - see repo.essentialsx.net.
 essentialsx = "2.19.6"
+# Compile-only, same category as paper-api above (not RigelPluginLoader-resolved) -
+# Log4j2 is what Paper's own server logging/console is actually built on, always present
+# on the runtime classpath. Needed for discord.ServerLogAppender's full-console mirror
+# (registers directly on Log4j2's root logger, not a java.util.logging Handler - see its
+# own javadoc for why). Exact version is a compile-time-only concern: AbstractAppender/
+# LoggerContext/Configuration/Level have been stable across the whole 2.x line for years,
+# so this doesn't need to match whatever exact 2.x build Paper 26.1.2 bundles at runtime.
+log4j-core = "2.24.3"
 junit-jupiter = "6.1.2"
 shadow = "9.6.1"
 run-paper = "3.0.2"
@@ -41,6 +49,7 @@ packetevents = { module = "com.github.retrooper:packetevents-spigot", version.re
 worldedit-bukkit = { module = "com.sk89q.worldedit:worldedit-bukkit", version.ref = "worldedit" }
 worldedit-core = { module = "com.sk89q.worldedit:worldedit-core", version.ref = "worldedit" }
 essentialsx = { module = "net.essentialsx:EssentialsX", version.ref = "essentialsx" }
+log4j-core = { module = "org.apache.logging.log4j:log4j-core", version.ref = "log4j-core" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
 
 [plugins]

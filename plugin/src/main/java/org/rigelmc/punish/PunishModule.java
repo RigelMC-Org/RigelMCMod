@@ -200,16 +200,20 @@ public final class PunishModule implements PluginModule {
                 }
                 long now = System.currentTimeMillis();
                 Duration duration = plugin.rigelConfig().banDefaultDuration();
-                Ban ban = banService.banByName(
-                        uuidOpt.get(), targetName, reason, actorUuid, now, now + duration.toMillis());
+                String targetIpHash = resolveIpHashForBan(uuidOpt.get(), onlineTarget);
+                List<Ban> created = banService.banByNameAndIp(
+                        uuidOpt.get(), targetName, targetIpHash, reason, actorUuid, now, now + duration.toMillis());
+                boolean alsoBannedIp = created.size() > 1;
 
                 if (coreProtectBridge.isAvailable()) {
                     coreProtectBridge.rollbackPlayer(targetName, plugin.rigelConfig().banAutoRollbackLookback());
                 }
 
                 sync(() -> {
-                    announcePunishment(sender, silent, "ban.public", "<gold>{target} was banned for 24h. Reason: {reason}",
-                            "target", targetName, "reason", reason);
+                    announcePunishment(sender, silent, "ban.public",
+                            "<gold>{target} was banned for 24h{ipnote}. Reason: {reason}",
+                            "target", targetName, "reason", reason,
+                            "ipnote", alsoBannedIp ? " (IP also banned)" : "");
                     if (onlineTarget != null) {
                         onlineTarget.kick(Component.text(
                                 "You have been banned for 24 hours.\nReason: " + reason, NamedTextColor.RED));
@@ -1097,6 +1101,23 @@ public final class PunishModule implements PluginModule {
             return Optional.of(online.getUniqueId());
         }
         return playerDao.findByLastKnownName(name).map(PlayerRecord::uuid);
+    }
+
+    /**
+     * @return the IP hash to ban alongside the name for {@code /ban}/{@code /gtfo} (see
+     *     {@code BanService#banByNameAndIp}'s own javadoc) - the target's current
+     *     connection IP if they're online right now, else their most-recently-seen one
+     *     from {@link #ipHistoryDao} ({@code findIpsForUuid} is already ordered
+     *     most-recent-first). {@code null} if neither source has anything (e.g. banning a
+     *     name that has never actually connected) - callers must handle that as "name-only
+     *     ban", not an error.
+     */
+    @Nullable
+    private String resolveIpHashForBan(UUID uuid, @Nullable Player online) throws SQLException {
+        if (online != null && online.getAddress() != null) {
+            return ipHasher.hash(online.getAddress().getAddress().getHostAddress());
+        }
+        return ipHistoryDao.findIpsForUuid(uuid).stream().findFirst().orElse(null);
     }
 
     private void sendPlayerNotFound(CommandSender sender, String name) {

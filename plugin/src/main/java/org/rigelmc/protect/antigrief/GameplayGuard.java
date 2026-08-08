@@ -2,6 +2,7 @@ package org.rigelmc.protect.antigrief;
 
 import io.papermc.paper.event.world.WorldGameRuleChangeEvent;
 import java.util.Map;
+import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
@@ -31,7 +32,7 @@ public final class GameplayGuard implements Listener {
 
     private final RigelMCMod plugin;
     private final PermissionGate permissionGate;
-    private final PerPlayerRateLimiter gamemodeSwitches = new PerPlayerRateLimiter(10_000);
+    private final PerPlayerRateLimiter<UUID> gamemodeSwitches = new PerPlayerRateLimiter<>(10_000);
 
     public GameplayGuard(@NotNull RigelMCMod plugin, @NotNull PermissionGate permissionGate) {
         this.plugin = plugin;

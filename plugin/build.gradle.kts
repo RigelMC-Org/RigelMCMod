@@ -13,6 +13,7 @@ base {
 
 dependencies {
     compileOnly(libs.paper.api)
+    compileOnly(libs.log4j.core)
     implementation(project(":api"))
 
     // Not shaded in - RigelPluginLoader resolves these at plugin-load time via

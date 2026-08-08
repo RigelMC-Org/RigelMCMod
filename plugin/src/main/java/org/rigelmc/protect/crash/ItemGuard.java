@@ -1,6 +1,7 @@
 package org.rigelmc.protect.crash;
 
 import java.util.List;
+import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
@@ -59,7 +60,7 @@ public final class ItemGuard implements Listener {
 
     private final RigelMCMod plugin;
     private final PermissionGate permissionGate;
-    private final PerPlayerRateLimiter handSwaps = new PerPlayerRateLimiter(1_000);
+    private final PerPlayerRateLimiter<UUID> handSwaps = new PerPlayerRateLimiter<>(1_000);
 
     public ItemGuard(@NotNull RigelMCMod plugin, @NotNull PermissionGate permissionGate) {
         this.plugin = plugin;

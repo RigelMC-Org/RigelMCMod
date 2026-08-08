@@ -55,14 +55,14 @@ public final class WorldEditAbuseGuard implements Listener {
     private final RigelMCMod plugin;
     private final PermissionGate permissionGate;
     private final StrikeService strikeService;
-    private final PerPlayerRateLimiter throttle;
+    private final PerPlayerRateLimiter<UUID> throttle;
 
     public WorldEditAbuseGuard(
             @NotNull RigelMCMod plugin, @NotNull PermissionGate permissionGate, @NotNull StrikeService strikeService) {
         this.plugin = plugin;
         this.permissionGate = permissionGate;
         this.strikeService = strikeService;
-        this.throttle = new PerPlayerRateLimiter(plugin.rigelConfig().worldEditThrottleWindowMs());
+        this.throttle = new PerPlayerRateLimiter<>(plugin.rigelConfig().worldEditThrottleWindowMs());
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
