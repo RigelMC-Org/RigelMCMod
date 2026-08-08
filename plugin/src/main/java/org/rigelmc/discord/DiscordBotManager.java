@@ -33,6 +33,7 @@ import java.util.logging.Logger;
 import java.util.regex.Pattern;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -43,6 +44,7 @@ import org.rigelmc.punish.appeal.Appeal;
 import org.rigelmc.punish.appeal.AppealService;
 import org.rigelmc.punish.ban.Ban;
 import org.rigelmc.rank.PermissionGate;
+import org.rigelmc.rank.Rank;
 import org.rigelmc.rank.RankService;
 
 /**
@@ -369,6 +371,24 @@ public final class DiscordBotManager {
     }
 
     /**
+     * User-requested: player join/leave posted to the public Discord channel (the
+     * "server chat bridge") and, separately, to the admin channel (the "staff chat
+     * bridge" - staff-only by virtue of who's actually in that channel, not an extra
+     * filter here). {@code includePublic} is {@code false} for a vanished player's leave
+     * (see {@code discord.JoinLeaveBridgeListener}) - the admin channel still gets it
+     * either way, since staff should know when a vanished colleague disconnects.
+     */
+    public void relayJoinLeave(@NotNull String message, boolean includePublic) {
+        String content = sanitize(message);
+        if (includePublic && publicChannel != null) {
+            publicChannel.createMessage(content).subscribe();
+        }
+        if (adminChannel != null) {
+            adminChannel.createMessage(content).subscribe();
+        }
+    }
+
+    /**
      * One-way: server log lines out to the console channel only, never accepts input
      * back. IP-redacted and sanitized (ANSI/legacy-color codes, mass mentions, length),
      * then handed to {@link #consoleRelayBatcher}, which groups it with whatever else
@@ -647,9 +667,9 @@ public final class DiscordBotManager {
         }
 
         if (channelId.equals(config.discordAdminChannelId())) {
-            relayAdminChannelToGame(plugin, permissionGate, author, content);
+            relayAdminChannelToGame(plugin, permissionGate, linkService, rankService, author, message);
         } else if (channelId.equals(config.discordPublicChannelId())) {
-            relayPublicChannelToGame(plugin, author, content);
+            relayPublicChannelToGame(plugin, linkService, rankService, author, message);
         }
     }
 
@@ -688,17 +708,90 @@ public final class DiscordBotManager {
                 .subscribe(v -> { }, error -> logger.log(Level.FINE, "Failed to react to a Discord message", error));
     }
 
-    private void relayAdminChannelToGame(RigelMCMod plugin, PermissionGate permissionGate, User author, String content) {
-        Component formatted = Component.text(
-                "[Discord/Staff] " + author.getUsername() + ": " + content, NamedTextColor.LIGHT_PURPLE);
+    private void relayAdminChannelToGame(
+            RigelMCMod plugin, PermissionGate permissionGate, DiscordLinkService linkService,
+            RankService rankService, User author, Message message) {
+        Component formatted = buildDiscordChatLine(
+                "[Discord/Staff] ", NamedTextColor.LIGHT_PURPLE, author, message, linkService, rankService,
+                plugin.rigelConfig());
         Bukkit.getScheduler().runTask(plugin, () -> Bukkit.getOnlinePlayers().stream()
                 .filter(p -> permissionGate.hasAtLeastCached(p.getUniqueId(), "moderator"))
                 .forEach(p -> p.sendMessage(formatted)));
     }
 
-    private void relayPublicChannelToGame(RigelMCMod plugin, User author, String content) {
-        String formatted = "[Discord] " + author.getUsername() + ": " + content;
-        Bukkit.getScheduler().runTask(plugin, () -> Bukkit.broadcast(Component.text(formatted)));
+    private void relayPublicChannelToGame(
+            RigelMCMod plugin, DiscordLinkService linkService, RankService rankService, User author, Message message) {
+        Component formatted = buildDiscordChatLine(
+                "[Discord] ", NamedTextColor.GRAY, author, message, linkService, rankService, plugin.rigelConfig());
+        Bukkit.getScheduler().runTask(plugin, () -> Bukkit.broadcast(formatted));
+    }
+
+    /**
+     * Builds one Discord-relayed chat line - user-reported (screenshot comparison against
+     * TFM's own bridge): TFM shows the poster's rank alongside their name (e.g. {@code
+     * [Discord] [SrA] lightwarp: ...}), while this bridge previously showed a flat
+     * {@code [Discord/Staff] name: message} with no rank information at all. Resolves the
+     * author's linked account (if any - {@link DiscordLinkService#resolveLinkedUuid}) and,
+     * if they hold a real rank (not the generic unranked default), appends that rank's
+     * exact same colored bracket prefix and name color {@code rank.PrefixService} already
+     * uses for their in-game chat - not a separate/different-looking Discord-only style.
+     * Unlinked posters (or ones on the plain default rank) get no extra bracket, matching
+     * TFM's own plain {@code [Discord] name message} case for a poster with nothing to
+     * show.
+     */
+    @NotNull
+    private Component buildDiscordChatLine(
+            String tag, NamedTextColor tagColor, User author, Message message, DiscordLinkService linkService,
+            RankService rankService, RigelConfig config) {
+        Component line = Component.text(tag, tagColor);
+        NamedTextColor nameColor = NamedTextColor.WHITE;
+        try {
+            Optional<UUID> linkedUuid = linkService.resolveLinkedUuid(author.getId().asString());
+            if (linkedUuid.isPresent()) {
+                Rank rank = rankService.rankOf(linkedUuid.get());
+                if (!rank.isDefault()) {
+                    String prefixText = config.rankPrefixOverride(rank.id()).orElse(rank.prefix());
+                    if (!prefixText.isEmpty()) {
+                        line = line.append(LegacyComponentSerializer.legacyAmpersand().deserialize(prefixText));
+                    }
+                    nameColor = Rank.nameColor(rank.id()).orElse(NamedTextColor.WHITE);
+                }
+            }
+        } catch (SQLException e) {
+            logger.log(Level.WARNING, "Failed to resolve a linked rank for a relayed Discord message", e);
+        }
+        return line.append(Component.text(author.getUsername() + ": ", nameColor))
+                .append(Component.text(cleanIncomingContent(message), NamedTextColor.WHITE));
+    }
+
+    /** Custom emoji markup {@code <a:name:id>}/{@code <:name:id>} - not renderable in Minecraft chat, kept as {@code :name:}. */
+    private static final Pattern CUSTOM_EMOJI_PATTERN = Pattern.compile("<a?:(\\w+):\\d+>");
+    /** Role mentions {@code <@&id>} - resolving the real role name needs an async lookup this synchronous relay path doesn't do; a generic, still-readable fallback beats a raw numeric id either way. */
+    private static final Pattern ROLE_MENTION_PATTERN = Pattern.compile("<@&\\d+>");
+    /** Channel mentions {@code <#id>} - same reasoning as role mentions above. */
+    private static final Pattern CHANNEL_MENTION_PATTERN = Pattern.compile("<#\\d+>");
+
+    /**
+     * User-reported bug (screenshot): raw Discord markup like {@code <a:hi:1356823061390823475>}
+     * (a custom emoji reference) was leaking straight into Minecraft chat as literal
+     * garbage - Discord's message content is markdown-ish source, not display text, and
+     * nothing was converting it before relaying. User mentions are resolved to real
+     * {@code @Username} via {@link Message#getUserMentions()} (already part of the
+     * message's own payload, no extra API call needed); role/channel mentions fall back to
+     * a generic {@code @role}/{@code #channel} - see {@link #ROLE_MENTION_PATTERN}'s
+     * javadoc for why those two aren't resolved to their real names here.
+     */
+    @NotNull
+    private static String cleanIncomingContent(@NotNull Message message) {
+        String content = CUSTOM_EMOJI_PATTERN.matcher(message.getContent()).replaceAll(":$1:");
+        for (User mentioned : message.getUserMentions()) {
+            String id = mentioned.getId().asString();
+            content = content.replace("<@" + id + ">", "@" + mentioned.getUsername())
+                    .replace("<@!" + id + ">", "@" + mentioned.getUsername());
+        }
+        content = ROLE_MENTION_PATTERN.matcher(content).replaceAll("@role");
+        content = CHANNEL_MENTION_PATTERN.matcher(content).replaceAll("#channel");
+        return content;
     }
 
     // ---- slash commands: /link, /console ------------------------------------------------

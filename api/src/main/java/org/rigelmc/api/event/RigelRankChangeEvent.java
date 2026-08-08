@@ -22,6 +22,14 @@ public class RigelRankChangeEvent extends Event implements Cancellable {
     private final UUID actorUuid;
     private boolean cancelled;
 
+    /**
+     * Constructs a new rank-change event.
+     *
+     * @param targetUuid the player whose rank is changing
+     * @param previousRankId the rank id held before this change, or {@code null} if previously unranked
+     * @param newRankId the rank id this player is changing to
+     * @param actorUuid the staff member who issued the change, or {@code null} if system-issued
+     */
     public RigelRankChangeEvent(
             @NotNull UUID targetUuid,
             @Nullable String previousRankId,
@@ -34,23 +42,41 @@ public class RigelRankChangeEvent extends Event implements Cancellable {
         this.actorUuid = actorUuid;
     }
 
+    /**
+     * The player whose rank is changing.
+     *
+     * @return the target's UUID
+     */
     @NotNull
     public UUID getTargetUuid() {
         return targetUuid;
     }
 
-    /** @return the rank id held before this change, or {@code null} if previously unranked */
+    /**
+     * The rank held before this change.
+     *
+     * @return the previous rank id, or {@code null} if previously unranked
+     */
     @Nullable
     public String getPreviousRankId() {
         return previousRankId;
     }
 
+    /**
+     * The rank this player is changing to.
+     *
+     * @return the new rank id
+     */
     @NotNull
     public String getNewRankId() {
         return newRankId;
     }
 
-    /** @return the staff member who issued the change, or {@code null} if system-issued */
+    /**
+     * The staff member who issued the change.
+     *
+     * @return the actor's UUID, or {@code null} if system-issued
+     */
     @Nullable
     public UUID getActorUuid() {
         return actorUuid;
@@ -72,6 +98,11 @@ public class RigelRankChangeEvent extends Event implements Cancellable {
         return HANDLERS;
     }
 
+    /**
+     * Bukkit's required static handler-list accessor.
+     *
+     * @return this event's static handler list
+     */
     @NotNull
     public static HandlerList getHandlerList() {
         return HANDLERS;

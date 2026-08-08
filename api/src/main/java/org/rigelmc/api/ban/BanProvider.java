@@ -12,12 +12,16 @@ import java.util.UUID;
 public interface BanProvider {
 
     /**
+     * Checks whether a player is currently banned.
+     *
      * @param uuid the player's UUID
      * @return {@code true} if this player is currently banned (temp or permanent, not expired)
      */
     boolean isBanned(UUID uuid);
 
     /**
+     * Checks whether an IP address is currently banned.
+     *
      * @param ipHash the salted/hashed IP to check (RigelMCMod never exposes raw IPs
      *     through the API; see the Network topology / Ban system design notes)
      * @return {@code true} if this IP is currently banned (temp or permanent, not expired)

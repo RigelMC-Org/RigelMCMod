@@ -30,11 +30,18 @@ import org.rigelmc.rank.PermissionGate;
  */
 public final class VanishModule implements PluginModule {
 
-    private final VanishService vanishService = new VanishService();
+    private final VanishService vanishService;
     private final PermissionGate permissionGate;
     private RigelMCMod plugin;
 
-    public VanishModule(@NotNull PermissionGate permissionGate) {
+    /**
+     * @param vanishService constructor-injected (rather than owned/created here) so
+     *     {@code discord.JoinLeaveBridgeListener} can also query vanish state - a
+     *     vanished staff member's leave shouldn't be announced to the public Discord
+     *     channel, since that would leak that they were online at all
+     */
+    public VanishModule(@NotNull VanishService vanishService, @NotNull PermissionGate permissionGate) {
+        this.vanishService = vanishService;
         this.permissionGate = permissionGate;
     }
 

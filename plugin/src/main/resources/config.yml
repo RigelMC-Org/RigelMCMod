@@ -830,6 +830,11 @@ discord:
   # admin-channel-id, regardless of this setting - see DiscordBotManager's own comment on
   # why that channel deliberately never doubles as a command channel.
   console-channel-executes-messages: true
+  # Player join/leave posted to public-channel-id (the server chat bridge) and, separately,
+  # to admin-channel-id (the staff chat bridge - staff-only simply because that's who's
+  # actually in that channel). A vanished player's leave only posts to the admin channel,
+  # never the public one - announcing it publicly would leak that they'd been online at all.
+  relay-join-leave: true
   # How long a /discord link one-time code stays valid before expiring unused.
   link-code-ttl-minutes: 5
   # Leave blank for normal use: /link and /console register as GLOBAL slash commands,

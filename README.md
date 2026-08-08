@@ -25,9 +25,10 @@ movement validator, command-spy/`/bookspy`); event- and packet-level crash-explo
 bridge; admin worlds with a guest system; the flatlands sandbox (CleanroomGenerator-backed
 for Eaglercraft/1.8-protocol compatibility, in-place wipe/autowipe by default with an
 opt-in restart-based mode, EssentialsX warp cleanup on wipe); disguise and skin bridges;
-the Discord bridge (Discord4J, account linking, rank-gated console-via-Discord); a
-read-only, multi-page web dashboard; and a separate public ban-appeal web form with
-Discord Approve/Deny buttons (auto-unban on approval). See `docs/architecture.md` for the
+the Discord bridge (Discord4J, account linking, rank-gated console-via-Discord, a
+TFM-style full server console mirror, and join/leave relay to both the public and staff
+channels); a read-only, multi-page web dashboard; and a separate public ban-appeal web form
+with Discord Approve/Deny buttons (auto-unban on approval). See `docs/architecture.md` for the
 full roadmap — the one
 remaining tracked item is Sub-phase F2 (`fun/`: jump pads, landmines, novelty guns,
 particle trails, novelty/troll commands), not yet built. Still under active hardening as
