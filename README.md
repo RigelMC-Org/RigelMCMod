@@ -313,15 +313,25 @@ a clickable appeal link (once `web.appeal.public-url` is set, e.g.
 `https://appeals.your-domain.com`) pointing at `GET /?case=<ref>`. A visitor who didn't
 follow that exact link can instead land on `GET /` (no params) and search by their
 Minecraft username - it resolves to their current active ban automatically, same appeal
-form either way. Submitting posts the appeal to a configured Discord channel
+form either way.
+
+Submitting validates the message isn't empty or over `appeal.max-message-length` (default
+1000 characters), that the target ban is still active, and that there isn't already a
+pending appeal on file for it, then posts to a configured Discord channel
 (`discord.appeal-channel-id`, falls back to `discord.admin-channel-id`) with
-**Approve**/**Deny** buttons - approving auto-unbans, both require a linked Discord account
-at least `discord.appeal-decision-min-rank` (default Moderator). `GET /status?id=<id>` lets
-an appellant check their submission's status afterward. Binds to `127.0.0.1` by default -
-meant to sit behind your own reverse proxy (which is what actually answers your real
-subdomain and terminates TLS), not to be exposed directly. If you're behind **Cloudflare**,
-set `appeal.client-ip-header` to `CF-Connecting-IP` (defaults to the more generic
-`X-Forwarded-For`) so per-submitter rate limiting sees real visitor IPs instead of
+**Approve**/**Deny** buttons - both require a linked Discord account at least
+`discord.appeal-decision-min-rank` (default Moderator). Approving auto-unbans; if the ban
+was one entry of a linked case (e.g. `/ban`'s own name+IP pairing, or a `/permban`
+cascade), the whole case is lifted, not just that one entry. `GET /status?id=<id>` lets an
+appellant check their submission's status afterward.
+
+Submissions are rate-limited per submitter IP (`appeal.rate-limit-window-minutes` /
+`-max-per-window`, default 1 per hour) - this is the only genuinely public, unauthenticated,
+write-capable surface this plugin exposes, so it gets its own scoped abuse prevention.
+Binds to `127.0.0.1` by default - meant to sit behind your own reverse proxy (which is what
+actually answers your real subdomain and terminates TLS), not to be exposed directly. If
+you're behind **Cloudflare**, set `appeal.client-ip-header` to `CF-Connecting-IP` (defaults
+to the more generic `X-Forwarded-For`) so the rate limiter sees real visitor IPs instead of
 Cloudflare's own.
 
 ## License
