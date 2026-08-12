@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
 import java.util.HashSet;
 import java.util.Set;
@@ -76,6 +77,28 @@ public final class AreaMemberDao {
             statement.setInt(1, areaId);
             statement.setString(2, memberUuid.toString());
             statement.executeUpdate();
+        }
+    }
+
+    /**
+     * Every member row for one area in a single statement - used by {@link
+     * ProtectAreaService#delete} so a deleted area doesn't leave orphaned member rows
+     * behind (there's no {@code ON DELETE CASCADE} on this table - see that method's
+     * javadoc for why this was worth fixing now rather than leaving as a latent gap).
+     */
+    public void deleteForArea(int areaId) throws SQLException {
+        String sql = "DELETE FROM rigel_protect_area_members WHERE area_id = ?";
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, areaId);
+            statement.executeUpdate();
+        }
+    }
+
+    /** Every member row for every area - used by {@link ProtectAreaService#clearAll}. */
+    public void deleteAll() throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+                Statement statement = connection.createStatement()) {
+            statement.executeUpdate("DELETE FROM rigel_protect_area_members");
         }
     }
 

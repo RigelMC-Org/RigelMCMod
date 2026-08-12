@@ -16,6 +16,7 @@ import org.rigelmc.RigelMCMod;
 import org.rigelmc.audit.AuditLogService;
 import org.rigelmc.core.PluginModule;
 import org.rigelmc.core.RigelConfig;
+import org.rigelmc.economy.InviteCreditService;
 import org.rigelmc.rank.PermissionGate;
 import org.rigelmc.rank.RankService;
 import org.rigelmc.vanish.VanishService;
@@ -26,6 +27,12 @@ import org.rigelmc.vanish.VanishService;
  * {@code /discord link}/{@code /discord unlink} regardless of whether the bot is
  * currently connected, so the linking flow's failure mode is a clear in-game message,
  * not a missing command.
+ *
+ * <p>Also schedules the Discord-invite-credit sweep ({@link InviteCreditService#sweep}) on
+ * a fixed {@code economy.invites.sweep-interval-seconds} timer, unconditionally - a no-op
+ * pass (an empty {@code findDueForSweep} result) if invite tracking isn't actually
+ * configured, which is simpler and no more wasteful than gating the timer itself behind
+ * the same config this module already reads fresh on every run.</p>
  */
 public final class DiscordModule implements PluginModule {
 
@@ -36,6 +43,7 @@ public final class DiscordModule implements PluginModule {
     private final AuditLogService auditLogService;
     private final ExecutorService dbExecutor;
     private final VanishService vanishService;
+    private final InviteCreditService inviteCreditService;
     private RigelMCMod plugin;
 
     public DiscordModule(
@@ -45,7 +53,8 @@ public final class DiscordModule implements PluginModule {
             @NotNull PermissionGate permissionGate,
             @NotNull AuditLogService auditLogService,
             @NotNull ExecutorService dbExecutor,
-            @NotNull VanishService vanishService) {
+            @NotNull VanishService vanishService,
+            @NotNull InviteCreditService inviteCreditService) {
         this.linkService = linkService;
         this.botManager = botManager;
         this.rankService = rankService;
@@ -53,6 +62,7 @@ public final class DiscordModule implements PluginModule {
         this.auditLogService = auditLogService;
         this.dbExecutor = dbExecutor;
         this.vanishService = vanishService;
+        this.inviteCreditService = inviteCreditService;
     }
 
     @Override
@@ -68,13 +78,33 @@ public final class DiscordModule implements PluginModule {
     @Override
     public void registerListeners(RigelMCMod plugin) {
         this.plugin = plugin;
-        botManager.start(plugin.rigelConfig(), plugin, linkService, rankService, permissionGate, auditLogService);
+        botManager.start(
+                plugin.rigelConfig(), plugin, linkService, rankService, permissionGate, auditLogService,
+                inviteCreditService);
         plugin.getServer()
                 .getPluginManager()
                 .registerEvents(new PublicChatBridgeListener(botManager), plugin);
         plugin.getServer()
                 .getPluginManager()
-                .registerEvents(new JoinLeaveBridgeListener(botManager, plugin, vanishService), plugin);
+                .registerEvents(new JoinLeaveBridgeListener(botManager, plugin, vanishService, rankService, dbExecutor), plugin);
+
+        long periodTicks = ticksFrom(plugin.rigelConfig().economyInviteSweepInterval());
+        Bukkit.getScheduler().runTaskTimer(plugin, () -> dbExecutor.submit(this::sweepInviteCredits), periodTicks, periodTicks);
+    }
+
+    private void sweepInviteCredits() {
+        try {
+            InviteCreditService.SweepResult result = inviteCreditService.sweep(System.currentTimeMillis());
+            if (result.credited() > 0) {
+                plugin.getLogger().info("Discord invite-credit sweep: credited " + result.credited() + " inviter(s).");
+            }
+        } catch (SQLException e) {
+            plugin.getLogger().log(Level.WARNING, "Failed to run the Discord invite-credit sweep", e);
+        }
+    }
+
+    private static long ticksFrom(Duration duration) {
+        return Math.max(duration.toMillis() / 50, 1); // 50ms per tick, minimum 1 tick
     }
 
     @Override

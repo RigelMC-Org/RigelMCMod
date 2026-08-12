@@ -20,9 +20,13 @@ public record Title(String id, String displayName, String prefix) {
     public static final Title DEVELOPER = new Title("developer", "Developer", "&8[&5Developer&8] &r");
     public static final Title EXECUTIVE = new Title("executive", "Executive", "&8[&4Executive&8] &r");
     public static final Title OWNER = new Title("owner", "Owner", "&8[&9Owner&8] &r");
+    /** Store-purchase (Tebex) supporter tier - see {@code store.StoreModule}. Purely cosmetic, same as every other title - grants no rank/permission. */
+    public static final Title SUPPORTER = new Title("supporter", "Supporter", "&8[&dSupporter&8] &r");
+    /** Vote-milestone reward - see {@code vote.VoteRecordService}. */
+    public static final Title VOTER = new Title("voter", "Voter", "&8[&aVoter&8] &r");
 
     public static java.util.List<Title> defaultTitles() {
-        return java.util.List.of(DEVELOPER, EXECUTIVE, OWNER);
+        return java.util.List.of(DEVELOPER, EXECUTIVE, OWNER, SUPPORTER, VOTER);
     }
 
     /**
@@ -40,6 +44,8 @@ public record Title(String id, String displayName, String prefix) {
             case "developer" -> Optional.of(NamedTextColor.DARK_PURPLE); // matches DEVELOPER's &5
             case "executive" -> Optional.of(NamedTextColor.DARK_RED); // matches EXECUTIVE's &4
             case "owner" -> Optional.of(NamedTextColor.BLUE); // matches OWNER's &9
+            case "supporter" -> Optional.of(NamedTextColor.LIGHT_PURPLE); // matches SUPPORTER's &d
+            case "voter" -> Optional.of(NamedTextColor.GREEN); // matches VOTER's &a
             default -> Optional.empty();
         };
     }
@@ -61,6 +67,12 @@ public record Title(String id, String displayName, String prefix) {
             case "developer" -> 40;
             case "executive" -> 50;
             case "owner" -> 60;
+            // Deliberately below the staff/founder titles above - a paid or vote-earned
+            // title should never visually override a real staff title if a player somehow
+            // holds both, but still above the generic default (31) so it's not silently
+            // indistinguishable from an unknown custom title.
+            case "voter" -> 33;
+            case "supporter" -> 35;
             default -> 31;
         };
     }

@@ -231,13 +231,27 @@ public final class ProtectAreaService {
         cache.put(current.id(), new AreaRegion(updated, current.members(), current.flagOverrides()));
     }
 
+    /**
+     * Deletes {@code region} and cascades to its member/flag-override rows - {@code
+     * rigel_protect_areas} has no {@code ON DELETE CASCADE} (confirmed by reading the
+     * migration directly), so without this an orphaned row in {@code
+     * rigel_protect_area_members}/{@code rigel_protect_area_flags} would sit around
+     * forever, unreachable through any cache path but never cleaned up. Harmless at the
+     * low frequency admin {@code /protectarea delete} calls this (small, cosmetic amount of
+     * dead data), but guild plot disbands (a literal delete-of-this-exact-kind-of-row) churn
+     * this dramatically more - worth fixing at the root rather than leaving a slow leak.
+     */
     public void delete(@NotNull AreaRegion region) throws SQLException {
+        memberDao.deleteForArea(region.id());
+        flagDao.deleteForArea(region.id());
         areaDao.delete(region.id());
         cache.remove(region.id());
     }
 
-    /** Wipes every region in one shot - backs {@code /protectarea clear confirm}. */
+    /** Wipes every region in one shot (including every member/flag row - see {@link #delete}'s javadoc) - backs {@code /protectarea clear confirm}. */
     public void clearAll() throws SQLException {
+        memberDao.deleteAll();
+        flagDao.deleteAll();
         areaDao.deleteAll();
         cache.clear();
     }

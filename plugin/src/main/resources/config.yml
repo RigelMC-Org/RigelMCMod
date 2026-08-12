@@ -91,6 +91,28 @@ modules:
     enabled: false
   discord:
     enabled: false
+  # RigelMCMod's own currency - off by default. Every command (/balance, /pay, /economy
+  # give|take|set) works standalone the moment you flip this on; only the *earning* side
+  # (Discord invite tracking, a separate later feature) additionally needs the Discord
+  # bridge's GUILD_MEMBERS privileged intent toggled on in the Discord Developer Portal
+  # first - the same one-time step this project's MESSAGE_CONTENT intent already needed.
+  economy:
+    enabled: false
+  # Guild rosters/roles (/guild) - no chat/tab-list tag, no land claims, just membership
+  # and roles. On by default, unlike economy/webpanel/appeal above, since it has no
+  # public-facing surface and needs nothing configured to be safe to leave on.
+  guild:
+    enabled: true
+  # /store grant coins|title - console/RCON only, meant to be the command an external
+  # store integration (e.g. Tebex) runs on purchase. On by default, same reasoning as
+  # guild above - console-only, does nothing unless actually invoked.
+  store:
+    enabled: true
+  # /vote record <player> - console/RCON only, meant to be the command an external
+  # vote-listener plugin runs on a successful vote. On by default, same reasoning as
+  # store above.
+  vote:
+    enabled: true
   announce:
     enabled: true
   vanish:
@@ -727,6 +749,86 @@ web:
   appeal:
     public-url: ""
 
+# RigelMCMod's own currency - see modules.economy above. Values are plain integers
+# ("coins"), never fractional.
+economy:
+  # Shown after an amount - singular for exactly 1, plural for everything else (e.g.
+  # "1 Coin", "0 Coins", "250 Coins"). Purely cosmetic - rename to fit your server's theme.
+  currency-name-singular: "Coin"
+  currency-name-plural: "Coins"
+  # Discord invite tracking -> Coins. Also needs discord.invite-tracking-guild-id set
+  # below, and the bot's GUILD_MEMBERS privileged intent toggled on in the Discord
+  # Developer Portal (one-time step, same as MESSAGE_CONTENT already needed) - without
+  # both, invite tracking silently does nothing even with this module enabled.
+  invites:
+    # Coins credited to the inviter per eligible join. Snapshotted per-credit at join
+    # time - changing this later never retroactively alters an already-scheduled credit.
+    reward-amount: 100
+    # How long an invited member must stay in the Discord server before their inviter is
+    # credited - anti-alt-farm. Default 1440 = 24 hours.
+    min-stay-minutes: 1440
+    # How often the pending-credit sweep runs - resolves inviter Discord accounts to
+    # RigelMCMod UUIDs and pays out anything past its minimum-stay window. An unresolved
+    # inviter (not yet linked) is retried every cycle indefinitely, never expires.
+    sweep-interval-seconds: 300
+
+# Guild rosters/roles/plots - see modules.guild above.
+guild:
+  # Bounds for /guild create <name>, in characters.
+  name-min-length: 3
+  name-max-length: 24
+  # A dedicated, plugin-managed world every guild's plot lives in - one plot per guild
+  # owner, auto-assigned on /guild create. Created automatically on first enable if it
+  # doesn't already exist, same as world.flatlands below. Creative-plotworld-style
+  # lockdown: a player can only build/break/interact/PVP/spawn mobs/pick up items inside
+  # a plot they're a member of - not in the gaps between plots, an unclaimed slot, or
+  # anyone else's plot (they can still walk anywhere). See GuildPlotWorldService's javadoc.
+  plotworld:
+    world-name: "guildplots"
+    # Pipe-delimited "height|blockType|..." layer list, same format as
+    # world.flatlands.generate-params below - passed straight through to CleanroomGenerator
+    # when installed, falling back to vanilla superflat otherwise.
+    generate-params: "16|stone|32|dirt|1|grass_block"
+    # The side length of one plot's buildable footprint, and the empty buffer kept between
+    # adjacent plots, both in blocks.
+    plot-size: 300
+    plot-gap: 16
+    # How many plots fit in one row of the grid before it wraps to the next row.
+    grid-columns: 10
+    # The flat ground level every plot sits on - also where /guild plot tp lands.
+    ground-y: 64
+
+# Vote-site streak/milestone rewards - see modules.vote above. Recorded via
+# "/vote record <player>", which you configure your vote-listener plugin to run on a
+# successful vote (nearly every vote plugin supports "run a command on vote" - this
+# deliberately doesn't require one specific plugin).
+vote:
+  # Coins credited every single recorded vote.
+  reward-per-vote: 50
+  # A vote within this many hours of the player's last one continues their streak;
+  # longer than this resets it back to 1. Generous beyond a strict 24h so slightly
+  # different vote times each day don't accidentally break a streak.
+  streak-window-hours: 48
+  # current-streak-length -> bonus Coins, awarded every time a player's streak reaches
+  # exactly that length - streaks reset and can be re-earned, so these repeat, unlike
+  # punish.strikes.thresholds' high-water-mark semantics.
+  streak-bonuses:
+    "3": 25
+    "7": 100
+    "30": 500
+  # total-votes-ever -> bonus Coins, awarded the one time a player's cumulative total
+  # reaches exactly that value (naturally one-time - a monotonically-increasing total
+  # only ever passes through each value once).
+  milestone-bonuses:
+    "10": 50
+    "50": 250
+    "100": 750
+  # total-votes-ever -> a title id to grant (see rank.Title) - same one-time semantics
+  # as milestone-bonuses above. "voter" is seeded by default; add your own custom title
+  # ids here if you create more.
+  milestone-titles:
+    "10": voter
+
 world:
   flatlands:
     # Name of the disposable superflat world /wipeflatlands manages. Created
@@ -830,10 +932,11 @@ discord:
   # admin-channel-id, regardless of this setting - see DiscordBotManager's own comment on
   # why that channel deliberately never doubles as a command channel.
   console-channel-executes-messages: true
-  # Player join/leave posted to public-channel-id (the server chat bridge) and, separately,
-  # to admin-channel-id (the staff chat bridge - staff-only simply because that's who's
-  # actually in that channel). A vanished player's leave only posts to the admin channel,
-  # never the public one - announcing it publicly would leak that they'd been online at all.
+  # Every player's join/leave posted to public-channel-id (the server chat bridge). Only a
+  # staff (Moderator+) join/leave is additionally posted to admin-channel-id (the staff
+  # activity channel) - a regular player joining isn't staff-relevant noise there. A
+  # vanished player's leave never posts to the public channel (would leak that they'd been
+  # online at all) but still reaches the admin channel if they're staff.
   relay-join-leave: true
   # How long a /discord link one-time code stays valid before expiring unused.
   link-code-ttl-minutes: 5
@@ -852,3 +955,11 @@ discord:
   # Only a linked Discord account at least this rank may click Approve/Deny on a posted
   # ban appeal.
   appeal-decision-min-rank: moderator
+  # Which Discord server's invites to track for the invite-to-Coins economy (see
+  # economy.invites above). Blank (the default) means invite tracking is off even with
+  # modules.economy.enabled - the bot only requests the privileged GUILD_MEMBERS and the
+  # non-privileged GUILD_INVITES intents, and only subscribes to invite/member events, when
+  # both this and economy are set. GUILD_MEMBERS additionally needs a one-time manual
+  # toggle in the Discord Developer Portal (Bot page -> Privileged Gateway Intents), same
+  # step MESSAGE_CONTENT already needed.
+  invite-tracking-guild-id: ""

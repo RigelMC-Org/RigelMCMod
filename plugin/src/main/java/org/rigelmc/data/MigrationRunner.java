@@ -37,7 +37,12 @@ public final class MigrationRunner {
             new Migration(8, "V8__protect_area.sql"),
             new Migration(9, "V9__flatlands_restart_wipe.sql"),
             new Migration(10, "V10__flatlands_wipe_folder.sql"),
-            new Migration(11, "V11__ban_appeals.sql"));
+            new Migration(11, "V11__ban_appeals.sql"),
+            new Migration(12, "V12__economy.sql"),
+            new Migration(13, "V13__guilds.sql"),
+            new Migration(14, "V14__guild_plot_cosmetics.sql"),
+            new Migration(15, "V15__discord_invite_credits.sql"),
+            new Migration(16, "V16__vote_tracking.sql"));
 
     private final Logger logger;
     private final boolean mysqlDialect;

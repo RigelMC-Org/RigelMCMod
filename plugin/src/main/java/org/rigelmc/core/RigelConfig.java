@@ -38,12 +38,16 @@ public final class RigelConfig {
     /**
      * @param moduleId a module's {@link PluginModule#id()}
      * @return whether {@code modules.<moduleId>.enabled} is set, defaulting to {@code true}
-     *     for every module except {@code webpanel} and {@code appeal}, both opt-in - each
-     *     stands up its own network-facing {@code HttpServer}, which shouldn't silently
-     *     start listening on an upgrade with no explicit choice to enable it
+     *     for every module except {@code webpanel}, {@code appeal}, and {@code economy},
+     *     all opt-in. {@code webpanel}/{@code appeal} each stand up their own network-
+     *     facing {@code HttpServer}, which shouldn't silently start listening on an
+     *     upgrade with no explicit choice to enable it. {@code economy} needs the Discord
+     *     bridge's privileged {@code GUILD_MEMBERS} intent toggled on in the Discord
+     *     Developer Portal before its earning side does anything - same one-time-setup
+     *     reasoning, even though economy itself isn't network-facing.
      */
     public boolean isModuleEnabled(@NotNull String moduleId) {
-        boolean defaultValue = !"webpanel".equals(moduleId) && !"appeal".equals(moduleId);
+        boolean defaultValue = !"webpanel".equals(moduleId) && !"appeal".equals(moduleId) && !"economy".equals(moduleId);
         return source.getBoolean("modules." + moduleId + ".enabled", defaultValue);
     }
 
@@ -914,6 +918,19 @@ public final class RigelConfig {
         return configured.isBlank() ? discordAdminChannelId() : configured;
     }
 
+    /**
+     * @return {@code discord.invite-tracking-guild-id} - which Discord server's invites to
+     *     track for the invite-to-Coins economy (see {@code economy.InviteCreditService}).
+     *     Blank (the default) means invite tracking is off even if {@code
+     *     modules.economy.enabled} is on - {@code DiscordBotManager} only requests the
+     *     privileged {@code GUILD_MEMBERS}/{@code GUILD_INVITES} intents and subscribes to
+     *     invite/member events when both this and economy are set.
+     */
+    @NotNull
+    public String discordInviteTrackingGuildId() {
+        return source.getString("discord.invite-tracking-guild-id", "");
+    }
+
     /** Minimum rank id allowed to click Approve/Deny on a posted ban appeal. */
     @NotNull
     public String discordAppealDecisionMinRank() {
@@ -1018,6 +1035,178 @@ public final class RigelConfig {
     @NotNull
     public String appealClientIpHeader() {
         return source.getString("appeal.client-ip-header", "X-Forwarded-For");
+    }
+
+    // ---- economy.* - RigelMCMod's own currency (modules.economy.enabled, opt-in) ------
+
+    /** @return whether the economy module is enabled - same as {@code isModuleEnabled("economy")}, exposed directly for readability at call sites outside the module itself (e.g. discord.DiscordBotManager's intent gating). */
+    public boolean economyEnabled() {
+        return isModuleEnabled("economy");
+    }
+
+    /** @return {@code economy.currency-name-singular} - shown for an amount of exactly 1 (e.g. "1 Coin"). */
+    @NotNull
+    public String economyCurrencyNameSingular() {
+        return source.getString("economy.currency-name-singular", "Coin");
+    }
+
+    /** @return {@code economy.currency-name-plural} - shown for every other amount (e.g. "0 Coins", "250 Coins"). */
+    @NotNull
+    public String economyCurrencyNamePlural() {
+        return source.getString("economy.currency-name-plural", "Coins");
+    }
+
+    /** @return {@code economy.invites.reward-amount} - Coins credited to the inviter per eligible Discord join. Snapshotted per-credit at join time, see {@code economy.InviteCreditService}. */
+    public long economyInviteRewardAmount() {
+        return source.getLong("economy.invites.reward-amount", 100);
+    }
+
+    /** @return {@code economy.invites.min-stay-minutes} - how long an invited member must stay in the Discord server before their inviter is credited (anti-alt-farm). */
+    @NotNull
+    public Duration economyInviteMinStayDuration() {
+        return Duration.ofMinutes(source.getLong("economy.invites.min-stay-minutes", 1440));
+    }
+
+    /** @return {@code economy.invites.sweep-interval-seconds} - how often the pending-credit sweep runs (resolves inviter UUIDs, pays out anything past its minimum-stay window). */
+    @NotNull
+    public Duration economyInviteSweepInterval() {
+        return Duration.ofSeconds(source.getLong("economy.invites.sweep-interval-seconds", 300));
+    }
+
+    // ---- guild.* - guild roster/roles (modules.guild.enabled, on by default) ----------
+
+    /** @return whether the guild module is enabled - same as {@code isModuleEnabled("guild")}. */
+    public boolean guildEnabled() {
+        return isModuleEnabled("guild");
+    }
+
+    /** @return {@code guild.name-min-length} - the shortest a {@code /guild create <name>} may be. */
+    public int guildNameMinLength() {
+        return source.getInt("guild.name-min-length", 3);
+    }
+
+    /** @return {@code guild.name-max-length} - the longest a {@code /guild create <name>} may be. */
+    public int guildNameMaxLength() {
+        return source.getInt("guild.name-max-length", 24);
+    }
+
+    // ---- guild.plotworld.* - the dedicated guild plot world -----------------------------
+
+    /** @return {@code guild.plotworld.world-name} - the dedicated, plugin-managed world every guild plot lives in. */
+    @NotNull
+    public String guildPlotWorldName() {
+        return source.getString("guild.plotworld.world-name", "guildplots");
+    }
+
+    /**
+     * @return {@code guild.plotworld.generate-params} - same pipe-delimited {@code
+     *     "height|blockType|..."} format as {@link #flatlandsGenerationParams}, passed
+     *     straight through to CleanroomGenerator when installed (see {@code
+     *     world.CleanroomGeneratorBridge}), falling back to vanilla superflat otherwise.
+     */
+    @NotNull
+    public String guildPlotGenerationParams() {
+        return source.getString("guild.plotworld.generate-params", "16|stone|32|dirt|1|grass_block");
+    }
+
+    /** @return {@code guild.plotworld.plot-size} - the side length of one plot's buildable footprint, in blocks. */
+    public int guildPlotSize() {
+        return source.getInt("guild.plotworld.plot-size", 300);
+    }
+
+    /** @return {@code guild.plotworld.plot-gap} - the empty buffer between adjacent plots, in blocks. */
+    public int guildPlotGap() {
+        return source.getInt("guild.plotworld.plot-gap", 16);
+    }
+
+    /** @return {@code guild.plotworld.grid-columns} - how many plots per row before the grid wraps to the next row. */
+    public int guildPlotGridColumns() {
+        return source.getInt("guild.plotworld.grid-columns", 10);
+    }
+
+    /** @return {@code guild.plotworld.ground-y} - the flat ground level every plot sits on. */
+    public int guildPlotGroundY() {
+        return source.getInt("guild.plotworld.ground-y", 64);
+    }
+
+    // ---- vote.* - vote-site streak/milestone rewards, recorded via /vote record ----------
+
+    /** @return {@code vote.reward-per-vote} - Coins credited every single recorded vote. */
+    public long voteRewardPerVote() {
+        return source.getLong("vote.reward-per-vote", 50);
+    }
+
+    /**
+     * @return {@code vote.streak-window-hours} - a vote within this many hours of the
+     *     player's last one continues their streak; longer than this resets it back to 1.
+     *     Deliberately generous beyond a strict 24h so slightly different vote times each
+     *     day don't accidentally break a streak.
+     */
+    @NotNull
+    public Duration voteStreakWindow() {
+        return Duration.ofHours(source.getLong("vote.streak-window-hours", 48));
+    }
+
+    /**
+     * @return {@code vote.streak-bonuses} - current-streak-length -> bonus Coins, awarded
+     *     every time a player's streak reaches <i>exactly</i> that length (unlike {@link
+     *     #strikeThresholds}'s high-water-mark semantics - a streak resets and can be
+     *     re-earned, so these deliberately repeat rather than only firing once ever).
+     */
+    @NotNull
+    public Map<Integer, Long> voteStreakBonuses() {
+        return parseIntToLongMap("vote.streak-bonuses");
+    }
+
+    /**
+     * @return {@code vote.milestone-bonuses} - total-votes-ever -> bonus Coins, awarded the
+     *     one time a player's cumulative total reaches exactly that value. Naturally
+     *     one-time (not high-water-mark like {@link #strikeThresholds}) since a
+     *     monotonically-incrementing total passes through every integer exactly once - no
+     *     separate "already awarded" bookkeeping needed.
+     */
+    @NotNull
+    public Map<Integer, Long> voteMilestoneBonuses() {
+        return parseIntToLongMap("vote.milestone-bonuses");
+    }
+
+    /**
+     * @return {@code vote.milestone-titles} - total-votes-ever -> a {@link
+     *     org.rigelmc.rank.Title} id to grant (see {@link org.rigelmc.rank.Title#VOTER}) -
+     *     same one-time-per-value semantics as {@link #voteMilestoneBonuses}. A title id
+     *     that isn't actually seeded is skipped, not an error - see {@code
+     *     vote.VoteRecordService}.
+     */
+    @NotNull
+    public Map<Integer, String> voteMilestoneTitles() {
+        Map<Integer, String> result = new LinkedHashMap<>();
+        ConfigurationSection section = source.getConfigurationSection("vote.milestone-titles");
+        if (section != null) {
+            for (String key : section.getKeys(false)) {
+                try {
+                    result.put(Integer.parseInt(key), section.getString(key));
+                } catch (NumberFormatException e) {
+                    // Skip a malformed key rather than fail the whole config load.
+                }
+            }
+        }
+        return result;
+    }
+
+    @NotNull
+    private Map<Integer, Long> parseIntToLongMap(@NotNull String path) {
+        Map<Integer, Long> result = new LinkedHashMap<>();
+        ConfigurationSection section = source.getConfigurationSection(path);
+        if (section != null) {
+            for (String key : section.getKeys(false)) {
+                try {
+                    result.put(Integer.parseInt(key), section.getLong(key));
+                } catch (NumberFormatException e) {
+                    // Skip a malformed key rather than fail the whole config load.
+                }
+            }
+        }
+        return result;
     }
 
     @NotNull

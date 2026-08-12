@@ -51,7 +51,17 @@ public enum AreaFlag {
     ITEM_PICKUP("item-pickup", true),
 
     /** Right-click/physical interaction with blocks and entities inside the region. */
-    INTERACT("interact", true);
+    INTERACT("interact", true),
+
+    /**
+     * Spawner-egg use, mob-spawner block spawns, and dispenser-fired spawn eggs inside the
+     * region - the actual griefing/lag vectors, not natural or ambient spawns (a mob that
+     * simply walks in from outside, or spawns naturally in the dark, is left alone). New -
+     * TFM has no equivalent; added specifically for guild plot protection (see {@code
+     * guild.plot.GuildPlotWorldService}), default ALLOW at the general {@code /protectarea}
+     * level so this flag is a no-op for every region created before it existed.
+     */
+    MOB_SPAWN("mob-spawn", true);
 
     private final String key;
     private final boolean defaultValue;

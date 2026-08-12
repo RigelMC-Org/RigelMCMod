@@ -15,6 +15,17 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 import org.rigelmc.announce.AnnounceModule;
 import org.rigelmc.appeal.AppealModule;
+import org.rigelmc.economy.EconomyDao;
+import org.rigelmc.economy.EconomyModule;
+import org.rigelmc.economy.EconomyService;
+import org.rigelmc.guild.GuildDao;
+import org.rigelmc.guild.GuildInviteManager;
+import org.rigelmc.guild.GuildMemberDao;
+import org.rigelmc.guild.GuildModule;
+import org.rigelmc.guild.GuildService;
+import org.rigelmc.guild.plot.GuildPlotWorldService;
+import org.rigelmc.guild.plot.PlotCosmeticDao;
+import org.rigelmc.guild.plot.PlotCosmeticService;
 import org.rigelmc.api.ban.BanProvider;
 import org.rigelmc.api.rank.RankProvider;
 import org.rigelmc.audit.AuditLogDao;
@@ -41,6 +52,12 @@ import org.rigelmc.discord.DiscordBotManager;
 import org.rigelmc.discord.DiscordLinkDao;
 import org.rigelmc.discord.DiscordLinkService;
 import org.rigelmc.discord.DiscordModule;
+import org.rigelmc.economy.InviteCreditDao;
+import org.rigelmc.economy.InviteCreditService;
+import org.rigelmc.store.StoreModule;
+import org.rigelmc.vote.VoteModule;
+import org.rigelmc.vote.VoteRecordDao;
+import org.rigelmc.vote.VoteRecordService;
 import org.rigelmc.disguise.DisallowedDisguises;
 import org.rigelmc.disguise.DisguiseModule;
 import org.rigelmc.fun.FunModule;
@@ -314,6 +331,10 @@ public final class RigelMCMod extends JavaPlugin {
         PlayerDao playerDao = new PlayerDao(dataSource);
         IpHistoryDao ipHistoryDao = new IpHistoryDao(dataSource);
         AuditLogService auditLogService = new AuditLogService(new AuditLogDao(dataSource));
+        EconomyService economyService = new EconomyService(new EconomyDao(dataSource));
+        GuildDao guildDao = new GuildDao(dataSource);
+        GuildMemberDao guildMemberDao = new GuildMemberDao(dataSource);
+        GuildInviteManager guildInviteManager = new GuildInviteManager();
 
         RankRepository rankRepository = new RankRepository(dataSource);
         RankService rankService = new RankService(rankRepository, playerDao);
@@ -322,6 +343,8 @@ public final class RigelMCMod extends JavaPlugin {
         TitleRepository titleRepository = new TitleRepository(dataSource);
         TitleService titleService = new TitleService(titleRepository);
         titleService.initialize();
+        VoteRecordService voteRecordService =
+                new VoteRecordService(new VoteRecordDao(dataSource), economyService, titleService);
 
         PermissionGate permissionGate = new PermissionGate(this, rankService);
         permissionGate.registerKnownPermissions();
@@ -338,6 +361,8 @@ public final class RigelMCMod extends JavaPlugin {
 
         DiscordLinkService discordLinkService = new DiscordLinkService(new DiscordLinkDao(dataSource));
         DiscordBotManager discordBotManager = new DiscordBotManager(getLogger());
+        InviteCreditService inviteCreditService =
+                new InviteCreditService(new InviteCreditDao(dataSource), economyService, discordLinkService);
         AppealService appealService =
                 new AppealService(this, new AppealDao(dataSource), banDao, playerDao, auditLogService, discordBotManager);
         discordBotManager.setAppealService(appealService);
@@ -367,6 +392,12 @@ public final class RigelMCMod extends JavaPlugin {
         LoginMessageDao loginMessageDao = new LoginMessageDao(dataSource);
         ProtectAreaService protectAreaService = new ProtectAreaService(
                 new AreaDao(dataSource), new AreaMemberDao(dataSource), new AreaFlagDao(dataSource), permissionGate);
+        // Constructed here, not alongside guildDao/guildMemberDao above, since it needs
+        // protectAreaService - see GuildPlotWorldService's own javadoc for why it (and by
+        // extension GuildService, which depends on it) stays entirely Bukkit/config-free.
+        GuildPlotWorldService guildPlotWorldService = new GuildPlotWorldService(guildDao, protectAreaService);
+        GuildService guildService = new GuildService(guildDao, guildMemberDao, guildPlotWorldService);
+        PlotCosmeticService plotCosmeticService = new PlotCosmeticService(new PlotCosmeticDao(dataSource), economyService);
         DisallowedDisguises disallowedDisguises = new DisallowedDisguises(rigelConfig());
 
         getServer()
@@ -403,7 +434,7 @@ public final class RigelMCMod extends JavaPlugin {
         built.add(protectModule);
         built.add(new DiscordModule(
                 discordLinkService, discordBotManager, rankService, permissionGate, auditLogService, dbExecutor,
-                vanishService));
+                vanishService, inviteCreditService));
         built.add(new WorldModule(flatlandsService, adminWorldService, spawnService, permissionGate));
         built.add(new AnnounceModule(permissionGate));
         built.add(new AutoOpModule(permissionGate, prefixService, displayService));
@@ -426,6 +457,12 @@ public final class RigelMCMod extends JavaPlugin {
         built.add(new WebPanelModule(
                 playerDao, banDao, new MuteDao(dataSource), permissionGate, titleService, dbExecutor));
         built.add(new AppealModule(appealService, ipHasher));
+        built.add(new EconomyModule(economyService, playerDao, permissionGate, auditLogService, dbExecutor));
+        built.add(new StoreModule(economyService, titleService, playerDao, auditLogService, dbExecutor));
+        built.add(new VoteModule(voteRecordService, playerDao, dbExecutor));
+        built.add(new GuildModule(
+                guildService, guildInviteManager, guildPlotWorldService, plotCosmeticService, playerDao, permissionGate,
+                auditLogService, dbExecutor));
         built.add(new EntityCleanupModule(permissionGate));
         built.add(new LockdownModule(rankService, permissionGate));
         built.add(new TickFreezeModule(permissionGate));

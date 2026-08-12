@@ -32,6 +32,7 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.event.block.SignChangeEvent;
 import org.bukkit.event.entity.AreaEffectCloudApplyEvent;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
@@ -292,6 +293,26 @@ public final class AreaProtectionListener implements Listener {
                 || isDeniedUnconditional(event.getDestination().getLocation(), AreaFlag.ITEM_PICKUP)) {
             event.setCancelled(true);
         }
+    }
+
+    // ---- MOB_SPAWN - new, no TFM equivalent ------------------------------------------------
+
+    /**
+     * Unconditional, matching every other "no acting player" handler above - only the real
+     * griefing/lag vectors (spawner eggs, mob-spawner blocks, dispenser-fired spawn eggs),
+     * not natural/ambient spawns, which are left alone entirely (a mob that wanders in from
+     * outside, or spawns naturally in the dark, isn't "spawned inside the region" in any
+     * abuse sense).
+     */
+    @EventHandler(ignoreCancelled = true)
+    public void onCreatureSpawn(@NotNull CreatureSpawnEvent event) {
+        CreatureSpawnEvent.SpawnReason reason = event.getSpawnReason();
+        if (reason != CreatureSpawnEvent.SpawnReason.SPAWNER_EGG
+                && reason != CreatureSpawnEvent.SpawnReason.SPAWNER
+                && reason != CreatureSpawnEvent.SpawnReason.DISPENSE_EGG) {
+            return;
+        }
+        denyUnconditional(event.getLocation().getBlock(), AreaFlag.MOB_SPAWN, event);
     }
 
     // ---- ENTRY - new, no TFM equivalent --------------------------------------------------

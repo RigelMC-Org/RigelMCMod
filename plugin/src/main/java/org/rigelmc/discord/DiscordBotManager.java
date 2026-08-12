@@ -4,15 +4,21 @@ import discord4j.common.util.Snowflake;
 import discord4j.core.DiscordClient;
 import discord4j.core.DiscordClientBuilder;
 import discord4j.core.GatewayDiscordClient;
+import discord4j.core.event.domain.InviteCreateEvent;
+import discord4j.core.event.domain.InviteDeleteEvent;
+import discord4j.core.event.domain.guild.MemberJoinEvent;
+import discord4j.core.event.domain.guild.MemberLeaveEvent;
 import discord4j.core.event.domain.interaction.ButtonInteractionEvent;
 import discord4j.core.event.domain.interaction.ChatInputInteractionEvent;
 import discord4j.core.event.domain.interaction.DeferrableInteractionEvent;
 import discord4j.core.event.domain.message.MessageCreateEvent;
+import discord4j.core.object.ExtendedInvite;
 import discord4j.core.object.command.ApplicationCommandOption;
 import discord4j.core.object.component.ActionRow;
 import discord4j.core.object.component.Button;
 import discord4j.core.object.component.TopLevelMessageComponent;
 import discord4j.core.object.emoji.Emoji;
+import discord4j.core.object.entity.Guild;
 import discord4j.core.object.entity.Message;
 import discord4j.core.object.entity.User;
 import discord4j.core.object.entity.channel.Channel;
@@ -24,10 +30,13 @@ import discord4j.gateway.intent.IntentSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
@@ -35,11 +44,13 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.rigelmc.RigelMCMod;
 import org.rigelmc.audit.AuditLogService;
 import org.rigelmc.core.RigelConfig;
+import org.rigelmc.economy.InviteCreditService;
 import org.rigelmc.punish.appeal.Appeal;
 import org.rigelmc.punish.appeal.AppealService;
 import org.rigelmc.punish.ban.Ban;
@@ -55,12 +66,13 @@ import org.rigelmc.rank.RankService;
  * {@code /o}) can hold a reference unconditionally and just get safe no-ops via
  * {@link #isReady()} when the bridge isn't running.
  *
- * <p>Account linking ({@code /link}) and console execution ({@code /console}) are
+ * <p>Account linking ({@code /link}), console execution ({@code /console}), the online-player
+ * list ({@code /list}), and the bot's own command reference ({@code /help}) are all
  * <b>Discord application (slash) commands</b>, not {@code !}-prefixed message parsing -
  * registered globally as this bot connects (see {@link #registerCommands}). Plain chat
  * relay (public/admin channel messages mirrored in-game) is unaffected and still driven
- * off {@link MessageCreateEvent} - only the two command-like interactions moved to
- * Discord's own native command UI. {@code /console} is registered with
+ * off {@link MessageCreateEvent} - only these command-like interactions moved to Discord's
+ * own native command UI. {@code /console} is registered with
  * {@code dmPermission(false)} so Discord itself refuses it outside a guild, on top of the
  * explicit channel check in {@link #handleConsoleCommand} - defense in depth for
  * the most security-sensitive path in this bridge.</p>
@@ -100,18 +112,32 @@ import org.rigelmc.rank.RankService;
  * broken. Not addressed with a defer/edit-reply flow here since it hasn't been an issue
  * in practice; revisit if it ever is.</p>
  *
+ * <p><b>Discord invite tracking -> Coins</b> (when {@code economy.enabled} and {@code
+ * discord.invite-tracking-guild-id} are both set): {@link #seedInviteUsesCache}/{@link
+ * #handleInviteCreate}/{@link #handleInviteDelete} keep an {@link InviteUsesCache} of every
+ * tracked invite's use count live; {@link #handleMemberJoin} diffs a fresh refetch against
+ * it to attribute a join to the invite that was used (Discord's gateway has no invite-code
+ * field on the join event itself - confirmed via {@code javap}, see {@link
+ * InviteUsesCache}'s own javadoc) and schedules a pending credit via {@code
+ * economy.InviteCreditService}; {@link #handleMemberLeave} cancels it if the invited member
+ * leaves before their minimum-stay window elapses. See docs/architecture.md "Economy:
+ * Discord-invite-tracked currency" for the full design.</p>
+ *
  * <p><b>Unverified against a live Discord bot in this session</b> - written against
  * Discord4J 3.3.2's documented API shape (confirmed via direct bytecode inspection, not
  * assumed - see {@code CONTRIBUTING.md}), not exercised against a real gateway
- * connection. Treat the {@code /link}/{@code /console} interaction paths as needing a
- * real end-to-end smoke test before relying on them in production - global slash command
- * registration in particular can take up to an hour to propagate on Discord's side after
- * a first connect.</p>
+ * connection. Treat the {@code /link}/{@code /console} interaction paths, and especially
+ * the invite-tracking paths above (privileged intent, real invite → join → wait → credit
+ * round trip), as needing a real end-to-end smoke test before relying on them in
+ * production - global slash command registration in particular can take up to an hour to
+ * propagate on Discord's side after a first connect.</p>
  */
 public final class DiscordBotManager {
 
     private static final String LINK_COMMAND = "link";
     private static final String CONSOLE_COMMAND = "console";
+    private static final String LIST_COMMAND = "list";
+    private static final String HELP_COMMAND = "help";
     private static final String CODE_OPTION = "code";
     private static final String COMMAND_OPTION = "command";
     private static final String APPEAL_APPROVE_PREFIX = "appeal-approve-";
@@ -138,6 +164,15 @@ public final class DiscordBotManager {
     private volatile ServerLogAppender consoleMirrorAppender;
     /** Same lifecycle as {@link #consoleMirrorAppender} - see {@link ConsoleRelayBatcher}. */
     private volatile ConsoleRelayBatcher consoleRelayBatcher;
+    /** Always constructed (cheap, no external dependencies) - only ever populated/consulted when invite tracking is actually configured, see {@link #handleMemberJoin}. */
+    private final InviteUsesCache inviteUsesCache = new InviteUsesCache();
+    /**
+     * Serializes the whole refetch-invites-then-diff-then-update sequence per join - closes
+     * the race window between two near-simultaneous joins on different invites, where both
+     * could otherwise refetch before either has updated {@link #inviteUsesCache}, each
+     * seeing the same stale baseline. See {@link InviteUsesCache}'s own javadoc.
+     */
+    private final ReentrantLock inviteJoinLock = new ReentrantLock();
 
     public DiscordBotManager(@NotNull Logger logger) {
         this.logger = logger;
@@ -158,7 +193,8 @@ public final class DiscordBotManager {
             @NotNull DiscordLinkService linkService,
             @NotNull RankService rankService,
             @NotNull PermissionGate permissionGate,
-            @NotNull AuditLogService auditLogService) {
+            @NotNull AuditLogService auditLogService,
+            @NotNull InviteCreditService inviteCreditService) {
         String token = config.discordBotToken();
         if (token.isBlank()) {
             logger.warning(
@@ -168,7 +204,8 @@ public final class DiscordBotManager {
         }
 
         Thread connectThread = new Thread(
-                () -> connectBlocking(config, plugin, linkService, rankService, permissionGate, auditLogService, token),
+                () -> connectBlocking(
+                        config, plugin, linkService, rankService, permissionGate, auditLogService, inviteCreditService, token),
                 "RigelMCMod Discord Connect");
         connectThread.setDaemon(true);
         connectThread.start();
@@ -181,13 +218,24 @@ public final class DiscordBotManager {
             RankService rankService,
             PermissionGate permissionGate,
             AuditLogService auditLogService,
+            InviteCreditService inviteCreditService,
             String token) {
         try {
+            // Invite tracking additionally needs a tracked guild id configured, on top of
+            // economy being enabled - see RigelConfig#discordInviteTrackingGuildId's javadoc.
+            boolean inviteTrackingEnabled = config.economyEnabled() && !config.discordInviteTrackingGuildId().isBlank();
+            IntentSet baseIntents = IntentSet.of(Intent.GUILD_MESSAGES, Intent.DIRECT_MESSAGES, Intent.MESSAGE_CONTENT);
+            // GUILD_MEMBERS is privileged - needs a one-time manual toggle in the Discord
+            // Developer Portal (Bot page -> Privileged Gateway Intents), same step
+            // MESSAGE_CONTENT already needed. GUILD_INVITES is not privileged.
+            IntentSet intents = inviteTrackingEnabled
+                    ? baseIntents.or(IntentSet.of(Intent.GUILD_MEMBERS, Intent.GUILD_INVITES))
+                    : baseIntents;
+
             DiscordClient discordClient = DiscordClientBuilder.create(token).build();
             GatewayDiscordClient connected = discordClient
                     .gateway()
-                    .setEnabledIntents(
-                            IntentSet.of(Intent.GUILD_MESSAGES, Intent.DIRECT_MESSAGES, Intent.MESSAGE_CONTENT))
+                    .setEnabledIntents(intents)
                     .login()
                     .block();
             if (connected == null) {
@@ -229,6 +277,46 @@ public final class DiscordBotManager {
                             logger.log(Level.WARNING, "Failed to handle a Discord button interaction", e);
                         }
                     });
+
+            if (inviteTrackingEnabled) {
+                connected.getEventDispatcher()
+                        .on(InviteCreateEvent.class)
+                        .subscribe(event -> {
+                            try {
+                                handleInviteCreate(event, config);
+                            } catch (RuntimeException e) {
+                                logger.log(Level.WARNING, "Failed to handle a Discord invite-create event", e);
+                            }
+                        });
+                connected.getEventDispatcher()
+                        .on(InviteDeleteEvent.class)
+                        .subscribe(event -> {
+                            try {
+                                handleInviteDelete(event, config);
+                            } catch (RuntimeException e) {
+                                logger.log(Level.WARNING, "Failed to handle a Discord invite-delete event", e);
+                            }
+                        });
+                connected.getEventDispatcher()
+                        .on(MemberJoinEvent.class)
+                        .subscribe(event -> {
+                            try {
+                                handleMemberJoin(event, config, inviteCreditService);
+                            } catch (RuntimeException e) {
+                                logger.log(Level.WARNING, "Failed to handle a Discord member-join event", e);
+                            }
+                        });
+                connected.getEventDispatcher()
+                        .on(MemberLeaveEvent.class)
+                        .subscribe(event -> {
+                            try {
+                                handleMemberLeave(event, config, inviteCreditService);
+                            } catch (RuntimeException e) {
+                                logger.log(Level.WARNING, "Failed to handle a Discord member-leave event", e);
+                            }
+                        });
+                seedInviteUsesCache(connected, config.discordInviteTrackingGuildId());
+            }
 
             this.publicChannel = resolveChannel(connected, config.discordPublicChannelId());
             this.adminChannel = resolveChannel(connected, config.discordAdminChannelId());
@@ -302,7 +390,19 @@ public final class DiscordBotManager {
                         .build())
                 .build();
 
-        List<ApplicationCommandRequest> commands = List.of(linkCommand, consoleCommand);
+        ApplicationCommandRequest listCommand = ApplicationCommandRequest.builder()
+                .name(LIST_COMMAND)
+                .description("List players currently online on the server")
+                .dmPermission(true) // reveals nothing sensitive, no reason to block DM use
+                .build();
+
+        ApplicationCommandRequest helpCommand = ApplicationCommandRequest.builder()
+                .name(HELP_COMMAND)
+                .description("List this bot's commands and what they do")
+                .dmPermission(true)
+                .build();
+
+        List<ApplicationCommandRequest> commands = List.of(linkCommand, consoleCommand, listCommand, helpCommand);
         long guildId = commandGuildId.isBlank() ? -1 : parseSnowflakeOrDefault(commandGuildId, -1);
         if (guildId != -1) {
             connected.getRestClient()
@@ -312,7 +412,7 @@ public final class DiscordBotManager {
                             data -> { },
                             error -> logger.log(Level.WARNING, "Failed to register Discord slash commands to guild "
                                     + commandGuildId, error),
-                            () -> logger.info("Registered Discord slash commands: /link, /console (guild "
+                            () -> logger.info("Registered Discord slash commands: /link, /console, /list, /help (guild "
                                     + commandGuildId + " - should appear immediately)."));
             return;
         }
@@ -326,8 +426,8 @@ public final class DiscordBotManager {
                 .subscribe(
                         data -> { },
                         error -> logger.log(Level.WARNING, "Failed to register Discord slash commands", error),
-                        () -> logger.info("Registered Discord slash commands: /link, /console (global - can take"
-                                + " up to an hour to appear; set discord.command-guild-id for instant testing)."));
+                        () -> logger.info("Registered Discord slash commands: /link, /console, /list, /help (global -"
+                                + " can take up to an hour to appear; set discord.command-guild-id for instant testing)."));
     }
 
     /** @return the parsed snowflake, or {@code fallback} if {@code raw} isn't a valid numeric Discord id. */
@@ -354,6 +454,123 @@ public final class DiscordBotManager {
         return textChannel;
     }
 
+    // ---- Discord invite tracking -> Coins (economy.invites.*) ---------------------------
+
+    /**
+     * Seeds {@link #inviteUsesCache} from every invite currently on the tracked guild, once
+     * on connect - {@code InviteCreateEvent}/{@code InviteDeleteEvent} keep it live from
+     * here on (see {@link InviteUsesCache}'s javadoc). Best-effort: a failure here (the
+     * tracked guild id doesn't resolve, or the REST call fails) leaves the cache empty,
+     * meaning every join is silently unattributed until the bridge reconnects - logged, not
+     * fatal to the rest of the bridge.
+     */
+    private void seedInviteUsesCache(GatewayDiscordClient connected, String trackedGuildId) {
+        try {
+            Guild guild = connected.getGuildById(Snowflake.of(trackedGuildId)).block();
+            if (guild == null) {
+                logger.warning("discord.invite-tracking-guild-id '" + trackedGuildId
+                        + "' was not found - invite tracking will not work until this is fixed and the bridge"
+                        + " reconnects.");
+                return;
+            }
+            List<ExtendedInvite> invites = guild.getInvites().collectList().block();
+            if (invites == null) {
+                return;
+            }
+            for (ExtendedInvite invite : invites) {
+                inviteUsesCache.seed(invite.getCode(), invite.getUses(), invite.getInviterId().map(Snowflake::asString).orElse(null));
+            }
+            logger.info("Seeded " + invites.size() + " Discord invite(s) for invite tracking.");
+        } catch (RuntimeException e) {
+            logger.log(Level.WARNING, "Failed to seed the Discord invite-uses cache - invite tracking may not"
+                    + " work until the bridge reconnects.", e);
+        }
+    }
+
+    private void handleInviteCreate(InviteCreateEvent event, RigelConfig config) {
+        if (isOtherGuild(event.getGuildId().map(Snowflake::asString).orElse(null), config)) {
+            return;
+        }
+        String inviterDiscordUserId = event.getInviter().map(user -> user.getId().asString()).orElse(null);
+        inviteUsesCache.onInviteCreated(event.getCode(), event.getUses(), inviterDiscordUserId);
+    }
+
+    private void handleInviteDelete(InviteDeleteEvent event, RigelConfig config) {
+        if (isOtherGuild(event.getGuildId().map(Snowflake::asString).orElse(null), config)) {
+            return;
+        }
+        inviteUsesCache.onInviteDeleted(event.getCode());
+    }
+
+    /**
+     * Refetches the tracked guild's current invites and diffs them against {@link
+     * #inviteUsesCache} to find which code's use count increased - the only reliable way to
+     * attribute this join, since Discord's gateway doesn't expose it directly (see {@link
+     * InviteUsesCache}'s javadoc). Schedules a {@code PENDING} credit for the resolved
+     * inviter if one was found; a join that can't be attributed at all (a vanity URL or the
+     * server's discovery page, neither a trackable invite code) or whose invite has no
+     * known inviter is silently skipped - nothing to credit.
+     */
+    private void handleMemberJoin(MemberJoinEvent event, RigelConfig config, InviteCreditService inviteCreditService) {
+        if (isOtherGuild(event.getGuildId().asString(), config)) {
+            return;
+        }
+        inviteJoinLock.lock();
+        try {
+            Guild guild = event.getGuild().block();
+            if (guild == null) {
+                return;
+            }
+            List<ExtendedInvite> invites = guild.getInvites().collectList().block();
+            if (invites == null) {
+                return;
+            }
+            List<InviteUsesCache.InviteSnapshot> snapshots = invites.stream()
+                    .map(invite -> new InviteUsesCache.InviteSnapshot(
+                            invite.getCode(), invite.getUses(), invite.getInviterId().map(Snowflake::asString).orElse(null)))
+                    .toList();
+            Optional<String> usedCode = inviteUsesCache.diffAndFindUsedCode(snapshots);
+            if (usedCode.isEmpty()) {
+                logger.fine("Could not attribute a Discord join to any invite code (vanity URL or server discovery page).");
+                return;
+            }
+            Optional<String> inviterDiscordUserId = inviteUsesCache.inviterDiscordUserIdFor(usedCode.get());
+            if (inviterDiscordUserId.isEmpty()) {
+                return; // no known inviter for this code - nothing to credit
+            }
+
+            long now = System.currentTimeMillis();
+            long rewardAmount = config.economyInviteRewardAmount();
+            long eligibleAt = now + config.economyInviteMinStayDuration().toMillis();
+            try {
+                inviteCreditService.schedulePendingCredit(
+                        event.getGuildId().asString(), usedCode.get(), inviterDiscordUserId.get(),
+                        event.getMember().getId().asString(), rewardAmount, now, eligibleAt);
+            } catch (SQLException e) {
+                logger.log(Level.WARNING, "Failed to schedule a pending Discord invite credit", e);
+            }
+        } finally {
+            inviteJoinLock.unlock();
+        }
+    }
+
+    /** Cancels any still-pending credit for this member if they leave before their minimum-stay window elapses - see {@code InviteCreditService#cancelForLeave}. */
+    private void handleMemberLeave(MemberLeaveEvent event, RigelConfig config, InviteCreditService inviteCreditService) {
+        if (isOtherGuild(event.getGuildId().asString(), config)) {
+            return;
+        }
+        try {
+            inviteCreditService.cancelForLeave(event.getUser().getId().asString());
+        } catch (SQLException e) {
+            logger.log(Level.WARNING, "Failed to cancel a pending Discord invite credit on member leave", e);
+        }
+    }
+
+    /** @return {@code true} if {@code guildId} isn't the configured tracked guild (or is {@code null}) - every invite-tracking handler ignores every other guild the bot might be in. */
+    private static boolean isOtherGuild(@Nullable String guildId, RigelConfig config) {
+        return guildId == null || !guildId.equals(config.discordInviteTrackingGuildId());
+    }
+
     public boolean isReady() {
         return client != null;
     }
@@ -371,19 +588,26 @@ public final class DiscordBotManager {
     }
 
     /**
-     * User-requested: player join/leave posted to the public Discord channel (the
-     * "server chat bridge") and, separately, to the admin channel (the "staff chat
-     * bridge" - staff-only by virtue of who's actually in that channel, not an extra
-     * filter here). {@code includePublic} is {@code false} for a vanished player's leave
-     * (see {@code discord.JoinLeaveBridgeListener}) - the admin channel still gets it
-     * either way, since staff should know when a vanished colleague disconnects.
+     * User-requested: every player's join/leave posted to the public Discord channel
+     * (the "server chat bridge"), but the admin channel only gets it for actual staff
+     * (Moderator+) - a regular player joining is noise there, not something staff need
+     * to see (user-reported: a screenshot of "server-admin-chat" filling up with
+     * ordinary players' joins/leaves). {@code includeAdmin} is resolved by {@code
+     * discord.JoinLeaveBridgeListener} off the main thread via {@code
+     * RankService#hasAtLeast} - never the {@code PermissionGate} online-rank cache,
+     * which isn't reliably populated yet this early in a join and is already cleared by
+     * the time a quit event reaches a {@code MONITOR}-priority listener (see that
+     * class's own javadoc). {@code includePublic} is {@code false} for a vanished
+     * player's leave - a vanished-but-staff departure can still reach the admin channel
+     * on its own merits via {@code includeAdmin}, since staff should know when a
+     * vanished colleague disconnects even though the public channel never should.
      */
-    public void relayJoinLeave(@NotNull String message, boolean includePublic) {
+    public void relayJoinLeave(@NotNull String message, boolean includePublic, boolean includeAdmin) {
         String content = sanitize(message);
         if (includePublic && publicChannel != null) {
             publicChannel.createMessage(content).subscribe();
         }
-        if (adminChannel != null) {
+        if (includeAdmin && adminChannel != null) {
             adminChannel.createMessage(content).subscribe();
         }
     }
@@ -808,6 +1032,8 @@ public final class DiscordBotManager {
             case LINK_COMMAND -> handleLinkCommand(event, linkService);
             case CONSOLE_COMMAND -> handleConsoleCommand(
                     event, config, plugin, linkService, rankService, auditLogService);
+            case LIST_COMMAND -> handleListCommand(event, plugin, permissionGate, rankService);
+            case HELP_COMMAND -> handleHelpCommand(event);
             default -> logger.fine("Ignoring unknown Discord slash command: " + event.getCommandName());
         }
     }
@@ -899,6 +1125,65 @@ public final class DiscordBotManager {
     }
 
     /**
+     * {@code /list} - every currently-online player, grouped by rank (highest first) via
+     * {@link PermissionGate#cachedRankId} + {@link RankService#rank} - both pure in-memory
+     * lookups, so this never touches the database. {@code Bukkit.getOnlinePlayers()} itself
+     * still has to hop to the main thread, matching every other cross-thread Bukkit read in
+     * this class (see {@link #relayPublicChannelToGame}).
+     */
+    private void handleListCommand(
+            ChatInputInteractionEvent event, RigelMCMod plugin, PermissionGate permissionGate, RankService rankService) {
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            List<Player> online = new ArrayList<>(Bukkit.getOnlinePlayers());
+            replyPublic(event, formatOnlinePlayers(online, permissionGate, rankService));
+        });
+    }
+
+    @NotNull
+    private String formatOnlinePlayers(
+            List<Player> online, PermissionGate permissionGate, RankService rankService) {
+        if (online.isEmpty()) {
+            return "No players are currently online.";
+        }
+        List<Player> sorted = new ArrayList<>(online);
+        sorted.sort(Comparator
+                .<Player>comparingInt(p -> -rankWeightOf(p, permissionGate, rankService))
+                .thenComparing(Player::getName, String.CASE_INSENSITIVE_ORDER));
+
+        StringBuilder body = new StringBuilder("**Online players (" + online.size() + "):**\n");
+        for (Player player : sorted) {
+            String rankId = permissionGate.cachedRankId(player.getUniqueId());
+            body.append("- ").append(sanitize(player.getName()));
+            // Rank.DEFAULT ("default"/"OP") is every auto-op'd player, not a real rank - see
+            // Rank's own javadoc - so it's left off rather than shown as noise on every line.
+            if (!"default".equals(rankId)) {
+                String rankName = rankService.rank(rankId).map(Rank::displayName).orElse(rankId);
+                body.append(" (").append(rankName).append(')');
+            }
+            body.append('\n');
+        }
+        return body.toString();
+    }
+
+    private int rankWeightOf(Player player, PermissionGate permissionGate, RankService rankService) {
+        String rankId = permissionGate.cachedRankId(player.getUniqueId());
+        return rankService.rank(rankId).map(Rank::weight).orElse(0);
+    }
+
+    /** {@code /help} - a static list of this bot's own commands, purely descriptive, no server state involved. */
+    private void handleHelpCommand(ChatInputInteractionEvent event) {
+        String body = "**RigelMCMod Discord bot commands:**\n"
+                + "- `/link <code>` - Link your Discord account to your RigelMCMod player account, using the"
+                + " one-time code from `/discord link` in-game.\n"
+                + "- `/console <command>` - Run a server console command (admin/console channel only, requires a"
+                + " linked account with sufficient in-game rank).\n"
+                + "- `/list` - List every player currently online on the server, grouped by rank.\n"
+                + "- `/help` - Show this message.\n\n"
+                + "Messages sent in the configured public/admin channels are also relayed to and from in-game chat.";
+        replyPublic(event, body);
+    }
+
+    /**
      * Ephemeral - only the invoking user sees the response, matching the old DM-only reply
      * behavior. Takes the common {@link DeferrableInteractionEvent} supertype (not just
      * {@link ChatInputInteractionEvent}) specifically so {@link ButtonInteractionEvent}'s
@@ -907,6 +1192,15 @@ public final class DiscordBotManager {
     private void replyEphemeral(DeferrableInteractionEvent event, String text) {
         event.reply(text)
                 .withEphemeral(true)
+                .subscribe(
+                        v -> { },
+                        error -> logger.log(Level.FINE, "Failed to send a Discord interaction reply", error));
+    }
+
+    /** Visible to everyone in the channel - for {@code /list}/{@code /help}, neither of which is sensitive. */
+    private void replyPublic(ChatInputInteractionEvent event, String text) {
+        event.reply(text)
+                .withEphemeral(false)
                 .subscribe(
                         v -> { },
                         error -> logger.log(Level.FINE, "Failed to send a Discord interaction reply", error));

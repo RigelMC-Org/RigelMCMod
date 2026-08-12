@@ -32,14 +32,16 @@ import org.rigelmc.rank.RankService;
 class ProtectAreaServiceTest {
 
     private HikariDataSource dataSource;
+    private AreaMemberDao memberDao;
+    private AreaFlagDao flagDao;
     private ProtectAreaService service;
 
     @BeforeEach
     void setUp(@TempDir java.io.File tempDir) throws Exception {
         this.dataSource = TestDatabase.create(tempDir);
         AreaDao areaDao = new AreaDao(dataSource);
-        AreaMemberDao memberDao = new AreaMemberDao(dataSource);
-        AreaFlagDao flagDao = new AreaFlagDao(dataSource);
+        this.memberDao = new AreaMemberDao(dataSource);
+        this.flagDao = new AreaFlagDao(dataSource);
 
         RankService rankService = new RankService(new RankRepository(dataSource), new org.rigelmc.data.dao.PlayerDao(dataSource));
         rankService.initialize();
@@ -128,12 +130,45 @@ class ProtectAreaServiceTest {
         assertTrue(service.find("gone").isEmpty());
     }
 
+    /**
+     * {@code rigel_protect_areas} has no {@code ON DELETE CASCADE} - confirms {@link
+     * ProtectAreaService#delete} itself cleans up the member/flag rows a naive {@code
+     * areaDao.delete} alone would silently orphan. See that method's javadoc.
+     */
+    @Test
+    void deleteCascadesToMemberAndFlagRows() throws Exception {
+        service.create("Gone", "world", 0, 0, 0, 1, 1, 1, false, null, 1000L);
+        AreaRegion region = service.find("gone").orElseThrow();
+        UUID member = UUID.randomUUID();
+        service.addMember(region, member, null, 1000L);
+        service.setFlag(region, AreaFlag.PVP, true);
+
+        service.delete(service.find("gone").orElseThrow());
+
+        assertTrue(memberDao.findForArea(region.id()).isEmpty());
+        assertTrue(flagDao.findForArea(region.id()).isEmpty());
+    }
+
     @Test
     void clearAllRemovesEveryRegion() throws Exception {
         service.create("A", "world", 0, 0, 0, 1, 1, 1, false, null, 1000L);
         service.create("B", "world", 5, 5, 5, 6, 6, 6, false, null, 1000L);
         service.clearAll();
         assertTrue(service.list().isEmpty());
+    }
+
+    @Test
+    void clearAllCascadesToMemberAndFlagRows() throws Exception {
+        service.create("A", "world", 0, 0, 0, 1, 1, 1, false, null, 1000L);
+        AreaRegion region = service.find("a").orElseThrow();
+        UUID member = UUID.randomUUID();
+        service.addMember(region, member, null, 1000L);
+        service.setFlag(region, AreaFlag.PVP, true);
+
+        service.clearAll();
+
+        assertTrue(memberDao.findForArea(region.id()).isEmpty());
+        assertTrue(flagDao.findForArea(region.id()).isEmpty());
     }
 
     @Test

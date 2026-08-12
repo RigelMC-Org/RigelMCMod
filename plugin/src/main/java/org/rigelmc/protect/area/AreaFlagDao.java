@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.EnumMap;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -66,6 +67,27 @@ public final class AreaFlagDao {
             statement.setInt(1, areaId);
             statement.setString(2, flag.key());
             statement.executeUpdate();
+        }
+    }
+
+    /**
+     * Every flag-override row for one area in a single statement - used by {@link
+     * ProtectAreaService#delete} so a deleted area doesn't leave orphaned flag rows behind.
+     * See {@link AreaMemberDao#deleteForArea}'s javadoc for the same rationale.
+     */
+    public void deleteForArea(int areaId) throws SQLException {
+        String sql = "DELETE FROM rigel_protect_area_flags WHERE area_id = ?";
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setInt(1, areaId);
+            statement.executeUpdate();
+        }
+    }
+
+    /** Every flag-override row for every area - used by {@link ProtectAreaService#clearAll}. */
+    public void deleteAll() throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+                Statement statement = connection.createStatement()) {
+            statement.executeUpdate("DELETE FROM rigel_protect_area_flags");
         }
     }
 

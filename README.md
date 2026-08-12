@@ -26,9 +26,16 @@ bridge; admin worlds with a guest system; the flatlands sandbox (CleanroomGenera
 for Eaglercraft/1.8-protocol compatibility, in-place wipe/autowipe by default with an
 opt-in restart-based mode, EssentialsX warp cleanup on wipe); disguise and skin bridges;
 the Discord bridge (Discord4J, account linking, rank-gated console-via-Discord, a
-TFM-style full server console mirror, and join/leave relay to both the public and staff
-channels); a read-only, multi-page web dashboard; and a separate public ban-appeal web form
-with Discord Approve/Deny buttons (auto-unban on approval). See `docs/architecture.md` for the
+TFM-style full server console mirror, join/leave relay to both the public and staff
+channels, and `/list`/`/help` bot commands); a read-only, multi-page web dashboard; a
+separate public ban-appeal web form with Discord Approve/Deny buttons (auto-unban on
+approval); a custom Coins currency with Discord-invite-tracked earning (`/balance`,
+`/pay`, `/economy`); a guild system (roles, no chat tag, no land claims) with a
+dedicated, strictly-protected 300x300-per-plot plot world (the whole world is locked down
+outside your own plot) and purchasable plot cosmetics (`/guild`), plus a console-only
+`/wipeguildplots confirm` full reset; and a Tebex-store command surface plus vote
+streak/milestone rewards, both EULA-compliant (Coins and purely-cosmetic titles only, never
+rank/permissions - `/store grant`, `/vote record`). See `docs/architecture.md` for the
 full roadmap - the one
 remaining tracked item is Sub-phase F2 (`fun/`: jump pads, landmines, novelty guns,
 particle trails, novelty/troll commands), not yet built. Still under active hardening as
@@ -132,6 +139,14 @@ after your first boot:
 | `/nickname <name>` (alias `/nick`) / `/nickname clear [player]` | Nickname shown in place of your real name (anyone, persists across sessions, `&`-color codes work); staff can force-clear another player's. Hovering a nickname in chat/tab reveals the real name |
 | `/rmcm info` | Plugin name, version, original author, license, website - open to everyone |
 | `/rmcm reload` | Reloads `config.yml` live (Senior Admin+) - see the caveat below |
+| `/balance [player]` / `/pay <player> <amount>` | Check your (or, Moderator+, another player's) Coins balance; send Coins to another player |
+| `/economy give\|take\|set <player> <amount>` / `/economy top` | Moderator+, audit-logged. `top` shows the highest balances server-wide |
+| `/guild create <name>` / `invite\|accept\|deny\|kick\|promote\|demote\|leave\|disband\|transferowner` / `info\|list` | Guild roster and roles - no chat/tab tag, no land claims. Owner auto-gets a strictly-protected plot in a dedicated plot world (`/guild plot tp`) |
+| `/guild plot cosmetic list\|buy <key>\|apply <key>` | Buy (charges your personal Coins balance, applies immediately) or freely re-apply an already-owned plot cosmetic - OWNER/OFFICER |
+| `/guild admin disband\|kick\|setowner <name> ...` | Moderator+ escape hatch for any guild |
+| `/wipeguildplots confirm` | **Console/RCON only.** Wipes the entire plot world's terrain and reassigns every existing guild a fresh, empty plot |
+| `/store grant coins\|title <player> <amount\|titleId>` | **Console/RCON only.** Tebex-style store command target - Coins or a purely-cosmetic title, never rank/permissions |
+| `/vote record <player>` | **Console/RCON only.** Vote-listener plugin command target - records a vote, grants the configured base/streak/milestone Coins and any milestone title |
 
 Rank/title prefixes now actually render (chat + tab list), not just exist as data -
 exactly **one** prefix shows at a time, never stacked: every title outranks every rank

@@ -89,7 +89,8 @@ New requirement: a Discord bridge with **three separate channels/webhooks** — 
 - Three distinct webhook/channel bindings in config: `discord.public-channel-id` (mirrors in-game public chat both directions), `discord.admin-channel-id` (mirrors `/o` admin chat both directions, **and** is the only channel that accepts console commands — see below), `discord.console-channel-id` (**one-way only**: server console/log stream out; deliberately does not accept commands in, since a channel that's constantly scrolling with log spam is both a poor UX and a worse security surface for something as sensitive as command execution than the quieter, already staff-only admin channel).
 - **Account linking**: `/discord link` in-game generates a short-lived one-time code (`rigel_discord_link_codes`, TTL-expiring); the player runs the Discord slash command `/link code:<code>` (DM'd to the bot) to bind their Discord user id to their RigelMCMod player UUID, stored in `rigel_discord_links(uuid, discord_user_id, linked_at)`. A DM slash command rather than a public-channel one, so codes are never visible to anyone but the linking player. Unlink via `/discord unlink`. Replies are ephemeral (only the invoking user sees them).
 - **Console-via-Discord is the security-sensitive part**, so it's scoped tightly: the `/console command:<command>` Discord slash command (not a `!`-prefixed message - see below) is only usable in the admin channel, enforced both by Discord itself (registered with `dmPermission(false)`) and by an explicit channel-id check in the handler; only linked accounts whose in-game rank is `Senior Admin` (the top rank) may issue them, never from DMs or the console/public channels, every attempt (successful or rejected) is written to `rigel_audit_log` with the Discord user id attached, and execution is dispatched through Bukkit's normal console-command-sender path (no special privilege escalation beyond what a console sender already has) — same blast radius as TFM's version, but explicitly rank-gated, link-gated, and audited rather than "any linked account," which is the concrete improvement over just copying the pattern as-is.
-- **Slash commands, not `!`-prefixed messages**: `/link` and `/console` are real Discord application commands (registered globally on bot connect, Discord's own native command UI/autocomplete), not plain-text messages starting with `!` - a deliberate later revision from the original `!link`/`!<command>` message-parsing design. Plain chat relay (public/admin channel messages mirrored in-game both ways) is unaffected and still message-based, since that's not a command, just chat.
+- **Slash commands, not `!`-prefixed messages**: `/link`, `/console`, `/list`, and `/help` are real Discord application commands (registered globally on bot connect, Discord's own native command UI/autocomplete), not plain-text messages starting with `!` - a deliberate later revision from the original `!link`/`!<command>` message-parsing design. Plain chat relay (public/admin channel messages mirrored in-game both ways) is unaffected and still message-based, since that's not a command, just chat.
+- **`/list`** — every currently-online player, grouped by rank (highest first), reading rank purely off `PermissionGate`'s cache and `RankService`'s in-memory rank table - never touches the database. **`/help`** — a static reference of the bot's own four commands and what they do. Both are DM-usable and reply visibly to the whole channel (`withEphemeral(false)`), unlike `/link`/`/console`, since neither reveals anything sensitive.
 - `/o <message>` — in-game staff broadcast to online staff + the admin Discord channel, permission-gated (`rigelmcmod.chat.adminchat`), independent of the Discord bridge being enabled at all (works in-game-only if Discord isn't configured).
 - **Discord→game chat relay formatting** (user-reported, screenshot-compared against TFM's own bridge): a relayed line now shows the poster's *linked in-game rank* using the exact same colored bracket prefix and name color `rank.PrefixService` already renders for their in-game chat (e.g. `[Discord] [SrA] name: msg`), not a flat, rank-blind `[Discord/Staff] name: msg` - unlinked posters, or ones on the plain unranked default, get no extra bracket, same as in-game. Also fixes a real bug: raw Discord markup (custom emoji like `<a:name:id>`, user/role/channel mentions) was leaking into Minecraft chat as literal garbage instead of being cleaned up first - see `DiscordBotManager#cleanIncomingContent`. (Not attempted: mirroring a poster's *Discord role* as a separate bracket, the way TFM's screenshot arguably also shows - unconfirmed from a low-resolution screenshot alone, and would need a live per-message role fetch; revisit if the user specifically wants that too.)
 - Scheduling note: this is a big enough standalone unit (new external dependency, bot lifecycle management, account linking flow, security-sensitive command execution) that it's tracked as its own roadmap phase rather than folded into Phase 1 — see Phased roadmap below. `/o` itself (in-game only, no Discord) ships as part of Phase 1's chat module since it needs no external dependency.
@@ -378,6 +379,242 @@ cancels `PlayerCommandPreprocessEvent`/`AsyncChatEvent`/`PlayerInteractEvent`/
 ordinary cancellable-Bukkit-event mechanism this codebase already uses everywhere else -
 not packet-level suppression.
 
+## Economy: Discord-invite-tracked currency
+
+A custom RigelMCMod currency ("Coins" by default, `economy.currency-name-singular`/`-plural`
+in config) - deliberately not built on Vault's Economy API. Confirmed by reading it
+directly before writing a line of this: `VaultChatBridge` only ever bridges Vault's *Chat*
+API (prefix/suffix rendering), never `net.milkbowl.vault.economy.Economy` - there was no
+existing Economy integration to build on, and this project has no reason to depend on a
+third-party economy plugin just to hold a number per player.
+
+- `rigel_economy_accounts`/`rigel_economy_ledger` (`V12`) - balance plus a full audit-trail
+  ledger, not just a mutable number, matching this project's `rigel_audit_log` precedent.
+  `LedgerReason` is a small fixed vocabulary (`DISCORD_INVITE`, `PAY_SEND`/`PAY_RECEIVE`,
+  `ADMIN_GIVE`/`TAKE`/`SET`, `PLOT_COSMETIC`), not free text, so a future `/economy history`
+  could filter cleanly. Amounts are `long` integer units throughout - never floating point.
+- `EconomyService` deliberately holds **no in-memory cache**, unlike `ProtectAreaService`/
+  `GuildService` - balances aren't read on any hot per-tick path, so every call goes
+  straight through `EconomyDao` off `dbExecutor`, matching `BanService`/`MuteService`'s
+  simpler no-cache style. `/balance [player]`, `/pay <player> <amount>`, `/economy
+  give|take|set <player> <amount>` (Moderator+, audit-logged) and `/economy top`.
+- **Discord invite tracking → Coins** (`discord.invite-tracking-guild-id` + `modules.economy.enabled`,
+  both required): the inviter of a Discord member who sticks around long enough gets
+  credited automatically. Discord's gateway has no invite-code field on the join event
+  itself - confirmed directly via `javap` against the real Discord4J 3.3.2 jar, not
+  assumed - so `discord.InviteUsesCache` tracks every tracked guild's invite use-counts
+  itself (seeded from `Guild.getInvites()` on connect, kept live via `InviteCreateEvent`/
+  `InviteDeleteEvent`) and diffs a fresh refetch against that baseline on every
+  `MemberJoinEvent` to figure out which code was used - the only reliable approach.
+  `DiscordBotManager` serializes that refetch-then-diff sequence per join behind a
+  `ReentrantLock`, closing the race window between two near-simultaneous joins that could
+  otherwise both diff against the same stale baseline.
+- **Pending-credit design** (`rigel_pending_invite_credits`, `V15`): a `PENDING` row is
+  inserted immediately on join, keyed by the inviter's *Discord user id*, not their
+  RigelMCMod UUID - so it doesn't matter whether the inviter has linked their account yet.
+  `economy.InviteCreditService#sweep`, run on a `economy.invites.sweep-interval-seconds`
+  timer (default 5 minutes), re-attempts UUID resolution every cycle and only pays out once
+  resolution succeeds **and** the row is past `eligible_at` (`joined_at +
+  economy.invites.min-stay-minutes`, default 24h - the anti-alt-farm minimum-stay window).
+  No expiry - an invite from before the inviter ever linked still eventually pays out.
+  `reward_amount` is snapshotted per-row at join time, so a later config change never
+  retroactively alters an already-scheduled credit.
+- **Early-leave cancellation**: `MemberLeaveEvent` flips a still-`PENDING` row to
+  `CANCELLED` for that invited Discord user. An already-`CREDITED` row is never
+  retroactively punished - only leaving *during* the probation window kills the reward.
+- Requesting the privileged `GUILD_MEMBERS` intent (needed for `MemberJoinEvent`/
+  `MemberLeaveEvent` at all) needs a one-time manual toggle in the Discord Developer
+  Portal (Bot page → Privileged Gateway Intents) - the same one-time step this project's
+  `MESSAGE_CONTENT` intent already needed. `GUILD_INVITES` is not privileged. Both are only
+  requested at all when invite tracking is actually configured.
+- **Cannot be verified in this sandbox**: the Developer Portal toggle actually being set; a
+  full real invite → join → wait → credit round trip against a live Discord guild; early-leave
+  cancellation against a live gateway. Every piece of *logic* here (the diff algorithm, the
+  sweep/eligibility/cancellation state machine) is unit-tested against a real temp-file
+  SQLite database - see `InviteUsesCacheTest`/`InviteCreditServiceTest` - what's untested is
+  Discord4J's actual wire behavior.
+
+## Guild system: roster, roles, and the plot world
+
+Player-formed guilds with roles and a strictly-protected personal plot per guild owner -
+deliberately **no chat/tab-list tag** (kept purely functional, unlike `/tag`) and **no
+general land claims** (that's what the dedicated plot world is for instead).
+
+- `rigel_guilds`/`rigel_guild_members` (`V13`) - `GuildRole` (`OWNER`/`OFFICER`/`MEMBER`,
+  weight-based `isAtLeast`) is entirely separate from the server-wide `rank.Rank` ladder.
+  `GuildService` caches its roster (`Map<Integer, GuildRoster>` + a `Map<UUID, Integer>`
+  reverse index, rebuilt on enable, kept in sync on every mutation) since command-layer
+  permission checks (is the sender OWNER/OFFICER of *their* guild) need to be fast and
+  synchronous - the same reasoning `ProtectAreaService` already established.
+- **Naming collision avoided deliberately**: "guild" means both a Discord server
+  (`discord4j.core.object.entity.Guild`) and a RigelMCMod player guild. No class here is
+  ever named bare `Guild` - `GuildRecord`/`GuildRoster`/`GuildService`, mirroring how
+  `protect.area`'s `AreaRecord`/`AreaRegion` avoid a bare `Area`.
+- **A guild's plot is a literal `rigel_protect_areas` row**, not a parallel protection
+  system - `guild.plot.GuildPlotWorldService` calls straight into `ProtectAreaService`'s
+  existing `create`/`addMember`/`removeMember`/`setOwner`/`delete`. This is the central
+  architectural bet of the whole feature: it gets block-edit protection (Bukkit events)
+  *and* WorldEdit/FAWE protection (`protect.worldedit.extent.ProtectAreaExtent`, already
+  covering every protected region for staff and non-staff alike) for guild plots with
+  **zero new event-handling code** for either. The one genuinely new protection surface is
+  `AreaFlag.MOB_SPAWN` (a 7th flag, default allow at the general `/protectarea` level) -
+  `AreaProtectionListener#onCreatureSpawn` denies `SPAWNER_EGG`/`SPAWNER`/`DISPENSE_EGG`
+  spawns unconditionally, leaving natural/ambient spawns untouched. A guild plot denies
+  `BUILD`/`EXPLOSIONS`/`MOB_SPAWN`/`INTERACT`/`PVP`; `ENTRY` stays allow so plots remain
+  visitable.
+- **Whole-plot-world lockdown, creative-plotworld-style** (user-requested): a single
+  boundary region (`guild-plotworld-boundary`) spans the entire plot world and denies
+  build/break/interact/PVP/explosions/mob-spawn/item-pickup for everyone - no owner, no
+  members, so only Moderator+ can act inside it at all. Every guild plot is created with
+  `allowNest = true` so it nests inside the boundary and, via the exact same overlap/
+  priority resolution `/protectarea create -nest` already uses, wins within its own
+  footprint for its own members - reusing the nesting system rather than building a second
+  one. Net effect: walk anywhere, but only build inside a plot you're actually a member of
+  - not the gaps between plots, not an unclaimed grid slot, not someone else's plot. Default
+  plot size is 300x300 (`guild.plotworld.plot-size`). Console/RCON-only `/wipeguildplots
+  confirm` wipes the plot world's terrain and reassigns every existing guild a fresh, empty
+  plot in one step (mirrors `world.FlatlandsService`'s in-place wipe dance, reusing
+  `dbExecutor` for the blocking file deletion the same way that class does).
+- **Visible road/border generation, PlotSquared-style** (user-requested - the protection
+  above is invisible on its own; nothing previously distinguished a plot's footprint from
+  the gap around it): `guild.plot.GuildPlotWorldPopulator` (a `BlockPopulator`, attached to
+  `World#getPopulators()` every time `GuildPlotWorldService#ensureWorldExists` attaches to
+  the plot world - Bukkit hands every `World` object a fresh, empty populators list each
+  JVM run, never persisted, so this is re-added on every enable rather than registered
+  once) paints a one-block-tall stone-brick-and-wall border around every plot's footprint
+  and stone road paving through the rest of the gap, as each chunk generates. The actual
+  column-by-column decision (`guild.plot.PlotWorldTerrain#classify`) is pure grid math, no
+  Bukkit dependency, same "separately unit-testable" split `PlotGridAllocator`/
+  `PlotCosmeticApplier` already established - `PlotWorldTerrainTest` caught a real bug in
+  the first version this way: a naive "one border column per gap, right after the plot"
+  only walls off two of a plot's four sides, since a gap band is shared by two different
+  plots (one on each end) and each needs its own border column, not one shared one. The
+  border ring is deliberately painted one block *outside* a plot's own `plot-size`
+  footprint, not carved out of it, so a plot's full claimed area stays buildable, and the
+  wall itself sits under the whole-plot-world boundary lockdown rather than any individual
+  plot's own membership - not even that plot's owner can grief their own border.
+  `BlockPopulator`s only ever run for chunks generated *after* they're attached - Bukkit
+  never re-populates an already-generated chunk - so a plot world that existed before this
+  shipped only gets roads/borders after a `/wipeguildplots confirm` regenerates it from
+  scratch; this cannot be verified end-to-end in this sandbox (no live Bukkit chunk
+  generation pipeline here), only the pure classification logic.
+- Membership sync (invite-accept, kick, leave, transfer-owner) keeps a plot's
+  protect-area membership in lockstep automatically; promote/demote never touch it (plot
+  bypass is membership-based, not role-based). Disbanding a guild deletes its plot region
+  and frees the grid slot for reuse - which is also what surfaced a real latent bug:
+  `ProtectAreaService#delete`/`clearAll` never cascaded to `rigel_protect_area_members`/
+  `rigel_protect_area_flags`, silently orphaning rows on every admin `/protectarea delete`
+  too. Fixed at the root rather than left as a slow leak, since guild disbands churn it far
+  more.
+- **Plot grid allocation is pure geometry** (`guild.plot.PlotGridAllocator`, fully unit-tested,
+  no Bukkit dependency) - row-major packing from `guild.plotworld.plot-size`/`plot-gap`/
+  `grid-columns`. A plot's Y bounds are a **fixed band around `guild.plotworld.ground-y`**
+  (20 below, 150 above - `GuildPlotWorldService.PLOT_Y_BELOW_GROUND`/`_ABOVE_GROUND`), not
+  queried from a live `World`'s real height limits - a deliberate trade (a plot doesn't
+  literally cover its entire theoretical build column) that keeps every method
+  `GuildService` calls into `GuildPlotWorldService` completely Bukkit/config-free, which is
+  what lets `GuildServiceTest` exercise the full create/join/leave/disband lifecycle -
+  including live plot assignment - against a real `ProtectAreaService` and a real temp-file
+  SQLite database, no MockBukkit (same "real service, `Proxy`-faked `Plugin`" precedent
+  `ProtectAreaServiceTest` already established, needed here only because `ProtectAreaService`
+  itself requires a `PermissionGate`). The plot world itself (`guild.plotworld.world-name`,
+  default `guildplots`) is created the same way `world.FlatlandsService` creates the
+  flatlands sandbox - `CleanroomGeneratorBridge` reuse for Eaglercraft/1.8-protocol floor
+  visibility, vanilla `WorldType.FLAT` fallback.
+- **Plot cosmetics** (`rigel_guild_plot_cosmetics`, `V14`) - a hardcoded catalog
+  (`guild.plot.PlotCosmetic`: 3 border themes, 3 paid floor re-themes plus a free default
+  reset, a beacon-pyramid centerpiece, 2 gate presets), purchased from the **buyer's
+  personal balance**, never a shared guild treasury (no guild-bank concept in scope) -
+  buying an unowned cosmetic charges and applies it immediately; re-applying an
+  already-owned one later is free. Placed via plain `Block#setType`
+  (`guild.plot.PlotCosmeticApplier`), deliberately never WorldEdit - the plugin is placing
+  these blocks itself, not a player, so `BlockPlaceEvent` never fires and the plot's own
+  protection has no effect on it either way; a real WorldEdit dependency would add nothing
+  here except complexity. `/guild plot cosmetic list|buy <key>|apply <key>` (buy/apply:
+  OWNER/OFFICER); `/guild plot tp` teleports a member to their guild's plot.
+- **General player-worn cosmetics remain out of scope, docs-only** - disguises/skins
+  already exist as their own separate features (see "Fun, disguises, and skins" above);
+  a broader player-cosmetics system (particle trails, hats, etc.) that could plausibly
+  spend this same Coins currency is a plausible future pass, not built or scheduled here.
+- **Cannot be verified in this sandbox**: WorldEdit/FAWE protection and mob-spawner/dispenser
+  denial inside a live plot (no WorldEdit/FAWE jar available here, same caveat
+  `/protectarea` itself already carries); plot-world floor rendering on an actual
+  Eaglercraft/Bedrock client.
+
+## Monetization: Tebex store commands + vote streaks/milestones
+
+User-requested: Tebex (the store) plus a generic vote-listener plugin as revenue/incentive
+surfaces, explicitly "EULA compliant" and explicitly *not* bound by the old TFM-lineage
+license's restrictions - confirmed by reading `LICENSE` directly rather than assuming: its
+own "Commercial Use" definition (Section 1) already carves out "operating a Minecraft
+server, commercial or not, that merely runs the Software internally (including a server
+that sells ranks, cosmetics, or other perks to its own players)" - running a monetized
+RigelMC server was never restricted by this project's license at all, so no license change
+was needed for any of this.
+
+- **Hard EULA-compliance boundary, enforced by omission**: every store/vote reward is
+  either Coins (spendable only on the guild-plot cosmetics catalog above - convenience/
+  cosmetic, not competitive advantage) or a purely-cosmetic `rank.Title` (no permission
+  grant - see "Ranks vs. Titles"). There is no `/store grant rank` command and there should
+  never be one; `store.StoreModule`'s class javadoc says so explicitly, so the boundary
+  survives even if this doc goes stale.
+- **`/store grant coins <player> <amount>` / `/store grant title <player> <titleId>`**
+  (`store.StoreModule`) - console/RCON-only, the same `rejectIfNotConsole` pattern
+  `rank.RankAdminModule`'s `/adminconfig` already established (checked inside the execute
+  body so a clear message shows instead of Brigadier's generic "unknown command" for a
+  player). This is the "new commands tuned for store use" a Tebex webstore package points
+  its command execution at on purchase - Tebex (or any store panel) runs a raw server
+  command per package, so a dedicated, minimal, console-only command surface is all a store
+  integration actually needs; no webhook listener or Tebex-specific dependency was added.
+  Every grant is both a `LedgerReason.STORE_PURCHASE` ledger entry (Coins) and an
+  `AuditLogService` record, so store activity is reviewable the same way admin `/economy
+  give` already is.
+- **`/vote record <player>`** (`vote.VoteModule`) - console/RCON-only, deliberately *not*
+  wired to any specific vote plugin's own Bukkit event (e.g. NuVotifier's `VotifierEvent`).
+  Nearly every vote-listener plugin supports "run a command on a successful vote" as a
+  universal feature regardless of vendor, so a plain command target works with whichever
+  one the operator ends up choosing, matching the same reasoning `/store grant` uses for
+  Tebex.
+- **`rigel_vote_records`** (`V16`, one row per player: `total_votes`, `current_streak`,
+  `last_vote_at`) backs `vote.VoteRecordService#recordVote`, orchestrating
+  `VoteRecordDao` + `EconomyService` + `TitleService` - pure JDBC, no Bukkit/Discord
+  dependency, unit-tested against a real temp-file SQLite database
+  (`VoteRecordDaoTest`/`VoteRecordServiceTest`), same as every other DAO/Service pair in
+  this project.
+  - **Streak**: a vote within `vote.streak-window-hours` (default 48h) of the player's last
+    one continues the streak; anything longer resets it to 1. `vote.streak-bonuses` pays out
+    on an **exact** streak-length match, and deliberately repeats every time that streak
+    length is re-earned (streaks reset and re-climb) - the opposite semantics from
+    `punish.strikes.thresholds`' high-water-mark `TreeMap#floorEntry` lookup, called out
+    explicitly in `VoteRecordService`'s javadoc so a future reader doesn't "fix" it into
+    matching strikes' behavior by mistake.
+  - **Milestones**: `vote.milestone-bonuses`/`vote.milestone-titles` key off the player's
+    cumulative `total_votes` instead, which only ever increases - an exact-match lookup is
+    naturally one-time per configured value with no separate "already awarded" bookkeeping
+    needed. A milestone title only grants if `titleId` resolves via `TitleService#title` -
+    an unconfigured/typo'd id in `config.yml` silently grants nothing rather than throwing,
+    since the caller is an operator's YAML, not application code.
+  - Base per-vote reward, streak bonus, and milestone bonus can each independently be
+    zero/unconfigured without special-casing - `VoteRecordService` checks each amount is
+    `> 0` itself rather than relying on `EconomyService#credit`'s positive-amount
+    requirement, since a literal 0 is a valid "this reward tier is disabled" config choice.
+- **New cosmetic `Title`s**: `SUPPORTER` (store-purchasable) and `VOTER` (the default
+  `vote.milestone-titles` entry, granted at 10 total votes) - both plain `Title.defaultTitles()`
+  entries with a `nameColor`/weight below every staff title, same mechanism every other
+  title already uses, no new code path.
+- **Other EULA-compliant reward ideas beyond Coins/streaks** (not implemented, offered as
+  options): a rotating cosmetic-only "Voter of the Month" chat color or plot cosmetic
+  unlock; a small `/kit vote` of purely decorative/no-durability-advantage items (banners,
+  dyed terracotta, etc. - anything with a gameplay stat would cross the line); temporary
+  (non-stacking) access to an otherwise-locked cosmetic-only region of the admin/creative
+  world; a `/store grant crate-key` style command if a future cosmetic-only loot crate
+  system gets built. None of these grant rank, permissions, or any gameplay-mechanical
+  advantage (faster mining, more damage, extra claim blocks, etc.), which is the actual
+  line Mojang's Minecraft Commercial Usage Guidelines draw.
+- **Cannot be verified in this sandbox**: an actual Tebex webstore package configured to
+  run `/store grant ...` on purchase; a real vote-listener plugin (NuVotifier or similar)
+  actually configured to run `/vote record <player>` against a live server.
+
 ## Cross-cutting services
 
 - **Anti-nuke**: in-memory sliding-window counters (`ConcurrentHashMap<UUID, RateWindow>`) over block break/place/explode events — synchronous since cancellation must happen sync, no DB round-trip on the hot path. Breach → cancel, optional auto-freeze, staff notify, async audit-log write. Applies regardless of WorldGuard region bypass or OP status — see `protect/` note above.
@@ -403,6 +640,7 @@ not packet-level suppression.
 4.5 **Web panel** — `webpanel/` module (see Ban system section): read-only stats/bans/permban-case dashboard plus title-aware staff roster and schematics browse/download, off by default, localhost-bound, no auth by design. Exit: confirmed unreachable when disabled (default), confirmed localhost-only when enabled with default config, confirmed schematics download can't escape its configured base directory (see `SchematicsServiceTest`).
 4.6 **Discord bridge** — `discord/` module (see Discord bridge & admin chat section): Discord4J-based three-channel bridge (public/admin/console), account linking, rank-gated audited console-via-Discord. Exit: linking flow round-trips, an unlinked or under-ranked account cannot execute console commands even from the admin channel, every executed command lands in `rigel_audit_log`.
 5. **Polish/release** — optional TFM YAML importer (best-effort, UUID-resolves via Mojang API rather than trusting old username keys), docs, permissions reference, Hangar/Modrinth publish, 1.0.0 tag. Any future remote-control/webhook feature (TFM's HTTPD equivalent) ships **only** as a separate, off-by-default, token-authenticated addon post-1.0 — never embedded and on-by-default.
+6. **Economy + Guild system** — user-requested, landed after 1.0.1 in six reviewed sub-phases (E1 economy core → G1 guild roster/roles → G2 plotworld + protection → G3 plot cosmetics → E2 Discord invite tracking → D1 this docs sync): see "Economy: Discord-invite-tracked currency" and "Guild system: roster, roles, and the plot world" sections above for the full design. Exit: `gradle check` green throughout every sub-phase (245 tests by the end, zero MockBukkit); the two live-Discord-only pieces (invite-credit round trip, WorldEdit/FAWE plot protection) explicitly flagged as sandbox-unverifiable rather than assumed working.
 
 Each phase lands as merged, flag-gated PRs to `main` rather than a long-lived branch, so `main` stays deployable throughout.
 
