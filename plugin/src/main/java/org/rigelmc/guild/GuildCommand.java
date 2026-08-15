@@ -33,6 +33,7 @@ import org.rigelmc.command.PlayerSuggestions;
 import org.rigelmc.core.RigelConfig;
 import org.rigelmc.data.dao.PlayerDao;
 import org.rigelmc.data.dao.PlayerRecord;
+import org.rigelmc.guild.plot.GuildPlotBypassService;
 import org.rigelmc.guild.plot.GuildPlotWorldService;
 import org.rigelmc.guild.plot.PlotCosmetic;
 import org.rigelmc.guild.plot.PlotCosmeticApplier;
@@ -46,7 +47,10 @@ import org.rigelmc.rank.PermissionGate;
  * precedent. Unlike that command (Moderator+ gated at the root), most of this tree is
  * self-service - only the {@code admin} subtree is staff-gated - so {@code .requires()} is
  * applied per subcommand rather than once at the root, matching {@code
- * world.WorldModule}'s existing idiom for the same "mixed self-service/staff" shape.
+ * world.WorldModule}'s existing idiom for the same "mixed self-service/staff" shape. {@code
+ * admin plotbypass} is gated stricter still - Senior Admin, not just Moderator+ - since it
+ * unlocks build/break anywhere in the shared plot world, not just moderation of one guild;
+ * see {@code guild.plot.GuildPlotBoundaryGuard}.
  *
  * <p>{@code plot} subtree covers {@code tp} and {@code cosmetic list|buy|apply}.</p>
  */
@@ -60,6 +64,7 @@ public final class GuildCommand {
     private final PermissionGate permissionGate;
     private final AuditLogService auditLogService;
     private final ExecutorService dbExecutor;
+    private final GuildPlotBypassService guildPlotBypassService;
     private RigelMCMod plugin;
 
     public GuildCommand(
@@ -70,7 +75,8 @@ public final class GuildCommand {
             @NotNull PlayerDao playerDao,
             @NotNull PermissionGate permissionGate,
             @NotNull AuditLogService auditLogService,
-            @NotNull ExecutorService dbExecutor) {
+            @NotNull ExecutorService dbExecutor,
+            @NotNull GuildPlotBypassService guildPlotBypassService) {
         this.guildService = guildService;
         this.inviteManager = inviteManager;
         this.guildPlotWorldService = guildPlotWorldService;
@@ -79,6 +85,7 @@ public final class GuildCommand {
         this.permissionGate = permissionGate;
         this.auditLogService = auditLogService;
         this.dbExecutor = dbExecutor;
+        this.guildPlotBypassService = guildPlotBypassService;
     }
 
     void bind(@NotNull RigelMCMod plugin) {
@@ -758,7 +765,11 @@ public final class GuildCommand {
     private LiteralCommandNode<CommandSourceStack> adminSubtree() {
         return Commands.literal("admin")
                 .requires(source -> hasRank(source, "moderator"))
-                .executes(ctx -> CommandUsage.show(ctx.getSource().getSender(), "/guild admin disband|kick|setowner <name> ..."))
+                .executes(ctx -> CommandUsage.show(
+                        ctx.getSource().getSender(), "/guild admin disband|kick|setowner|plotbypass <name> ..."))
+                .then(Commands.literal("plotbypass")
+                        .requires(source -> hasRank(source, "senior_admin"))
+                        .executes(this::executePlotBypassToggle))
                 .then(Commands.literal("disband")
                         .executes(ctx -> CommandUsage.show(ctx.getSource().getSender(), "/guild admin disband <name>"))
                         .then(Commands.argument("name", StringArgumentType.word())
@@ -779,6 +790,35 @@ public final class GuildCommand {
                                         .suggests(PlayerSuggestions.ONLINE_PLAYERS)
                                         .executes(this::executeAdminSetOwner))))
                 .build();
+    }
+
+    /**
+     * Toggles the calling Senior Admin's {@code guild.plot.GuildPlotBypassService} flag -
+     * see {@code guild.plot.GuildPlotBoundaryGuard} for the actual enforcement this
+     * unlocks. Player-only (console has no plot to stand in and break blocks from) -
+     * checked here rather than via {@code .requires()} so a console/RCON caller gets a
+     * clear message instead of Brigadier's generic "unknown command", matching every
+     * other console-vs-player split in this codebase.
+     */
+    private int executePlotBypassToggle(CommandContext<CommandSourceStack> ctx) {
+        CommandSender sender = ctx.getSource().getSender();
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(Component.text(
+                    "/guild admin plotbypass can only be run in-game - console/RCON already bypasses everything.",
+                    NamedTextColor.RED));
+            return 0;
+        }
+        boolean nowOn = guildPlotBypassService.toggle(player.getUniqueId());
+        player.sendMessage(nowOn
+                ? Component.text(
+                        "Guild plot-world bypass ENABLED - you can now build/break outside your own plot"
+                                + " (including borders/roads) until you toggle this off or log out.",
+                        NamedTextColor.GOLD)
+                : Component.text(
+                        "Guild plot-world bypass DISABLED - you're now restricted to your own plot again, like"
+                                + " everyone else.",
+                        NamedTextColor.GREEN));
+        return 1;
     }
 
     private int executeAdminDisbandWarning(CommandContext<CommandSourceStack> ctx) {

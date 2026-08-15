@@ -20,8 +20,11 @@ import org.rigelmc.audit.AuditLogService;
 import org.rigelmc.core.PluginModule;
 import org.rigelmc.core.RigelConfig;
 import org.rigelmc.data.dao.PlayerDao;
+import org.rigelmc.guild.plot.GuildPlotBoundaryGuard;
+import org.rigelmc.guild.plot.GuildPlotBypassService;
 import org.rigelmc.guild.plot.GuildPlotWorldService;
 import org.rigelmc.guild.plot.PlotCosmeticService;
+import org.rigelmc.protect.area.ProtectAreaService;
 import org.rigelmc.rank.PermissionGate;
 
 /**
@@ -39,6 +42,13 @@ import org.rigelmc.rank.PermissionGate;
  * /flatlands}). Console/RCON-only, unconditionally (not just when a specific config flag is
  * set, unlike {@code /wipeflatlands}'s own conditional gate) - this is more consequential
  * than a flatlands wipe: it also reassigns every existing guild's plot, not just terrain.</p>
+ *
+ * <p>Also registers {@code guild.plot.GuildPlotBoundaryGuard} (user-requested): nobody -
+ * not even staff - can break/place anything outside their own plot in the plot world
+ * without a Senior Admin first toggling {@code /guild admin plotbypass}. See that class's
+ * javadoc for why this is a separate, additive listener rather than a change to the
+ * general {@code protect.area.ProtectAreaService} bypass floor every other protected
+ * region still uses unchanged.</p>
  */
 public final class GuildModule implements PluginModule {
 
@@ -46,6 +56,9 @@ public final class GuildModule implements PluginModule {
     private final GuildPlotWorldService guildPlotWorldService;
     private final GuildCommand command;
     private final ExecutorService dbExecutor;
+    private final PermissionGate permissionGate;
+    private final GuildPlotBypassService guildPlotBypassService;
+    private final ProtectAreaService protectAreaService;
     private RigelMCMod plugin;
 
     public GuildModule(
@@ -56,13 +69,18 @@ public final class GuildModule implements PluginModule {
             @NotNull PlayerDao playerDao,
             @NotNull PermissionGate permissionGate,
             @NotNull AuditLogService auditLogService,
-            @NotNull ExecutorService dbExecutor) {
+            @NotNull ExecutorService dbExecutor,
+            @NotNull GuildPlotBypassService guildPlotBypassService,
+            @NotNull ProtectAreaService protectAreaService) {
         this.guildService = guildService;
         this.guildPlotWorldService = guildPlotWorldService;
         this.dbExecutor = dbExecutor;
+        this.permissionGate = permissionGate;
+        this.guildPlotBypassService = guildPlotBypassService;
+        this.protectAreaService = protectAreaService;
         this.command = new GuildCommand(
                 guildService, inviteManager, guildPlotWorldService, plotCosmeticService, playerDao, permissionGate,
-                auditLogService, dbExecutor);
+                auditLogService, dbExecutor, guildPlotBypassService);
     }
 
     @Override
@@ -86,6 +104,8 @@ public final class GuildModule implements PluginModule {
         } catch (SQLException e) {
             plugin.getLogger().log(Level.WARNING, "Failed to load persisted guild state", e);
         }
+        plugin.getServer().getPluginManager().registerEvents(
+                new GuildPlotBoundaryGuard(plugin, protectAreaService, permissionGate, guildPlotBypassService), plugin);
     }
 
     @Override

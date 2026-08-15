@@ -35,16 +35,41 @@ class PlotWorldTerrainTest {
     void theMiddleOfTheGapIsRoad() {
         // plotSize=16, plotGap=4: local gap columns are 16,17,18,19 - 16 is border, 17-18 is
         // open road, 19 is the border ring of the *next* cell over (local 0 of the next tile).
+        // Deliberately unaffected by the intersection-square fix below - both of these calls
+        // have Z fixed inside a plot's own footprint (8 < 16), so they're on a straight edge,
+        // not inside a corner intersection square.
         assertEquals(PlotWorldTerrain.CellType.ROAD, PlotWorldTerrain.classify(17, 8, 16, 4));
         assertEquals(PlotWorldTerrain.CellType.ROAD, PlotWorldTerrain.classify(18, 8, 16, 4));
     }
 
     @Test
-    void theRoadNeverAppearsDiagonallyBetweenFourPlotCorners() {
-        // At a 4-plot intersection (both axes deep in the gap simultaneously, not on either
-        // border ring) it's still open road, not border - only the ring exactly one block
-        // out from a footprint is border.
-        assertEquals(PlotWorldTerrain.CellType.ROAD, PlotWorldTerrain.classify(17, 17, 16, 4));
+    void theIntersectionSquareIsFullyWalledNotOpenRoad() {
+        // User-reported bug, fixed: a 4-plot intersection (both axes deep in the gap
+        // simultaneously, not just on either plot's own straight-edge border ring) used to
+        // stay open road - only the single column closest to each of the (up to) 4
+        // surrounding plots was BORDER, leaving 4 disconnected wall stubs around an open
+        // diamond of pavement. The whole intersection square is BORDER now - every corner
+        // reads as one clean, fully-enclosed wall.
+        assertEquals(PlotWorldTerrain.CellType.BORDER, PlotWorldTerrain.classify(17, 17, 16, 4));
+    }
+
+    @Test
+    void everyColumnOfTheIntersectionSquareIsBorderNotJustTheFourCorners() {
+        // Regression guard for the exact reported bug: sweep the entire plotGap x plotGap
+        // intersection square (plotSize=16, plotGap=4 -> local gap columns 16..19 on both
+        // axes) and assert every one of the 16 cells is BORDER, not just the 4 corner points
+        // closest to a plot. This is what actually would have caught the original bug (only
+        // 4 of these 16 cells were BORDER, the other 12 were open ROAD).
+        for (int dx = 0; dx < 4; dx++) {
+            for (int dz = 0; dz < 4; dz++) {
+                int worldX = 16 + dx;
+                int worldZ = 16 + dz;
+                assertEquals(
+                        PlotWorldTerrain.CellType.BORDER,
+                        PlotWorldTerrain.classify(worldX, worldZ, 16, 4),
+                        "expected BORDER at intersection-square column (" + worldX + ", " + worldZ + ")");
+            }
+        }
     }
 
     @Test
@@ -71,7 +96,10 @@ class PlotWorldTerrainTest {
         // Regression coverage for the original bug: a naive "border at gap-offset 0 only"
         // walls off just two of a plot's four sides, leaving the other two touching bare
         // road directly. worldX=-1 is immediately below the origin plot (0..15) and must be
-        // BORDER, exactly like worldX=16 (immediately above it) already is.
+        // BORDER, exactly like worldX=16 (immediately above it) already is. Deliberately
+        // unaffected by the intersection-square fix above - Z is fixed inside the plot's own
+        // footprint (8 < 16) in both calls, so these are straight-edge columns, not inside a
+        // corner intersection square.
         assertEquals(PlotWorldTerrain.CellType.BORDER, PlotWorldTerrain.classify(16, 8, 16, 4));
         assertEquals(PlotWorldTerrain.CellType.BORDER, PlotWorldTerrain.classify(-1, 8, 16, 4));
     }

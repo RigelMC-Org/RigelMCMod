@@ -11,12 +11,13 @@ import org.rigelmc.rank.PermissionGate;
 
 /**
  * Wires together every anti-grief primitive in this package - anti-nuke, anti-spam,
- * anti-drop, the movement validator/world border, gamerule/gamemode-flood enforcement,
- * mob-spam blocking (including the server-wide natural-spawn disable), lethal-potion
- * blocking, and the opt-in text filter. Each guard independently checks its own
- * {@code protect.anti-grief.*} enabled flag on every event, so toggling one via
- * {@code /rmcm reload} takes effect immediately without touching the others. See
- * config.yml's {@code protect.anti-grief} section for the full rationale and every knob.
+ * anti-drop, TNT/fire block-damage toggles, leaf-decay toggle, the movement validator/world
+ * border, gamerule/gamemode-flood enforcement, mob-spam blocking (including the server-wide
+ * natural-spawn disable), lethal-potion blocking, and the opt-in text filter. Each guard
+ * independently checks its own {@code protect.anti-grief.*} enabled flag on every event, so
+ * toggling one via {@code /rmcm reload} takes effect immediately without touching the
+ * others. See config.yml's {@code protect.anti-grief} section for the full rationale and
+ * every knob.
  */
 public final class AntiGriefModule implements PluginModule {
 
@@ -49,6 +50,7 @@ public final class AntiGriefModule implements PluginModule {
         pluginManager.registerEvents(new AntiSpamGuard(plugin, permissionGate), plugin);
         pluginManager.registerEvents(new AntiDropGuard(plugin), plugin);
         pluginManager.registerEvents(new ExplosionAndFireGuard(plugin), plugin);
+        pluginManager.registerEvents(new LeafDecayGuard(plugin), plugin);
         pluginManager.registerEvents(new MobSpamGuard(plugin), plugin);
         pluginManager.registerEvents(new PotionGuard(plugin), plugin);
         pluginManager.registerEvents(new TextFilterListener(plugin, banService, dbExecutor, plugin.getLogger()), plugin);

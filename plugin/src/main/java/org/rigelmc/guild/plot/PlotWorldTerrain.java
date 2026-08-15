@@ -36,6 +36,19 @@ import org.jetbrains.annotations.NotNull;
  * same silent degrade {@link PlotGridAllocator} already has for that configuration. {@code
  * plotGap == 1} or {@code 2} leaves both neighboring plots' single/two border column(s)
  * touching directly, with no open road between them.</p>
+ *
+ * <p><b>Intersection squares (where a 4-plot corner meets) are fully solid</b> -
+ * user-reported: applying the straight-edge rule per-axis at a corner used to leave
+ * {@code BORDER} only at the single column closest to each of the (up to) 4 surrounding
+ * plots, with open road filling the rest of the square between them - four disconnected,
+ * never-touching wall stubs around an open diamond of pavement. Once neither axis is inside
+ * a plot's own footprint (both are somewhere in the gap simultaneously - i.e. this column is
+ * inside the {@code plotGap x plotGap} intersection square, not on a straight edge), the
+ * whole square is {@code BORDER}: every corner reads as a clean, fully-enclosed wall with no
+ * gap. Straight roads between two adjacent plots are untouched by this - they still run the
+ * full open width right up to the intersection, then dead-end into this solid block rather
+ * than passing through it (plots are reached via {@code /guild plot tp}, not on-foot travel
+ * across the whole grid, so a non-passable intersection costs nothing functionally).</p>
  */
 public final class PlotWorldTerrain {
 
@@ -70,15 +83,22 @@ public final class PlotWorldTerrain {
         AxisZone zoneX = axisZone(Math.floorMod(worldX, cell), plotSize, plotGap);
         AxisZone zoneZ = axisZone(Math.floorMod(worldZ, cell), plotSize, plotGap);
 
-        if (zoneX == AxisZone.PLOT && zoneZ == AxisZone.PLOT) {
+        boolean xIsPlot = zoneX == AxisZone.PLOT;
+        boolean zIsPlot = zoneZ == AxisZone.PLOT;
+        if (xIsPlot && zIsPlot) {
             return CellType.PLOT;
         }
-        if (zoneX == AxisZone.MIDDLE || zoneZ == AxisZone.MIDDLE) {
-            return CellType.ROAD;
+        if (xIsPlot || zIsPlot) {
+            // A straight edge, not a corner intersection - unchanged from before this fix:
+            // the gap axis's own EDGE/MIDDLE zone alone decides border vs road.
+            AxisZone gapZone = xIsPlot ? zoneZ : zoneX;
+            return gapZone == AxisZone.MIDDLE ? CellType.ROAD : CellType.BORDER;
         }
-        // Neither axis is MIDDLE and at least one isn't PLOT (the both-PLOT case already
-        // returned above) - every remaining combination has at least one EDGE axis, which is
-        // exactly the ring touching some plot's footprint on that side.
+        // Neither axis is PLOT - this column is inside an intersection square, where up to 4
+        // different plots' corners approach diagonally. See class javadoc: the whole square
+        // is BORDER, fully sealing every corner - previously only the single column closest
+        // to each plot was BORDER here, leaving the rest of the square as open road and four
+        // disconnected wall stubs that never touched each other.
         return CellType.BORDER;
     }
 

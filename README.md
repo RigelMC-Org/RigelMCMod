@@ -126,10 +126,13 @@ after your first boot:
 | `/o <message>` | Staff-only broadcast - in-game, plus the Discord admin channel if the bridge is connected |
 | `/discord link` / `/discord unlink` | Link/unlink your Discord account (finish by running `/link code:CODE` as a Discord slash command, in a DM to the bot) |
 | `/wipeflatlands` | Immediately wipe and regenerate the flatlands sandbox world (in-place by default - Senior Admin+, in-game or console; console/RCON-only if `world.flatlands.wipe-requires-restart: true`). Also removes any EssentialsX `/warp` left pointing into it |
-| `/announce <message>` | One-off server-wide broadcast, MiniMessage-formatted (colors, gradients, etc.) |
+| `/wipeworld confirm` | **Console/RCON only, two-step confirm.** Wipes and regenerates the primary Overworld itself (fresh random seed) - every player's build in it is lost. Nether/End are untouched, and there's no auto-wipe schedule for this at all |
+| `/announce <message>` | One-off server-wide broadcast, MiniMessage-formatted (colors, gradients, etc.) - any `https://`/`http://` URL in the message (configured rotation lines too) is automatically made clickable |
+| `/gcmd <player> <command...>` | **Senior Admin.** Run a command as another online player - re-checks the outgoing command against `protect.command-access` (using *your* rank) before dispatching it, closing the bypass a raw `dispatchCommand` would otherwise open |
 | `/rvanish` | Vanish, hidden from regular players *and* non-staff auto-op'd players (Moderator+) |
 | `/op [player]` / `/opall` / `/deop <player>` / `/deopall` | `/op` is open to everyone (self or another online player) - vanilla op status carries no RigelMCMod rank of its own. `/opall`/`/deop`/`/deopall` are Moderator+ |
 | `/lockdown [on\|off]` | **Admin+, in-game or console/RCON.** While enabled, only Moderator+ may join - session-only, always starts off |
+| `/worldeditlimit [radius\|volume <value>\|reset]` | **Senior Admin, in-game or console/RCON.** View or change the WorldEdit radius/volume limit non-staff players are held to, right now - session-only, resets to `config.yml`'s value on restart. Staff already bypass both limits entirely regardless. Much tighter caps apply automatically near the configured spawn point (`protect.worldedit.spawn-protection`), staff exempt as usual |
 | `/mobpurge [radius]` (alias `/mp`) / `/entitywipe [radius]` (alias `/ew`) | Remove living non-player entities / dropped items+orbs+stuck projectiles. Moderator+, public broadcast |
 | `/freeze [on\|off\|purge]` (alias `/fr`) / `/freeze <player> [on\|off]` / `/freezeall` | Senior Admin+. Bare `/freeze` (and `/freezeall`) toggles a global freeze on every online player, matching TFM |
 | `/smite <player> [reason]` | Senior Admin+. Deop, survival, clear inventory, 3×3 lightning strike, kill - matches TFM's `Command_smite` |
@@ -144,6 +147,7 @@ after your first boot:
 | `/guild create <name>` / `invite\|accept\|deny\|kick\|promote\|demote\|leave\|disband\|transferowner` / `info\|list` | Guild roster and roles - no chat/tab tag, no land claims. Owner auto-gets a strictly-protected plot in a dedicated plot world (`/guild plot tp`) |
 | `/guild plot cosmetic list\|buy <key>\|apply <key>` | Buy (charges your personal Coins balance, applies immediately) or freely re-apply an already-owned plot cosmetic - OWNER/OFFICER |
 | `/guild admin disband\|kick\|setowner <name> ...` | Moderator+ escape hatch for any guild |
+| `/guild admin plotbypass` | **Senior Admin, in-game only.** Toggles your own bypass of the plot world's lockdown - without it, nobody (staff included) can build/break outside their own plot, not even the border wall |
 | `/wipeguildplots confirm` | **Console/RCON only.** Wipes the entire plot world's terrain and reassigns every existing guild a fresh, empty plot |
 | `/store grant coins\|title <player> <amount\|titleId>` | **Console/RCON only.** Tebex-style store command target - Coins or a purely-cosmetic title, never rank/permissions |
 | `/vote record <player>` | **Console/RCON only.** Vote-listener plugin command target - records a vote, grants the configured base/streak/milestone Coins and any milestone title |

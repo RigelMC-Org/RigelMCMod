@@ -24,6 +24,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.PlayerInventory;
 import org.jetbrains.annotations.NotNull;
 import org.rigelmc.RigelMCMod;
+import org.rigelmc.audit.AuditLogService;
 import org.rigelmc.command.CommandUsage;
 import org.rigelmc.command.PlayerSuggestions;
 import org.rigelmc.core.PluginModule;
@@ -32,15 +33,19 @@ import org.rigelmc.data.dao.IpHistoryDao;
 import org.rigelmc.data.dao.PlayerDao;
 import org.rigelmc.data.dao.PlayerRecord;
 import org.rigelmc.identity.IpHasher;
+import org.rigelmc.protect.CommandAccessRegistry;
+import org.rigelmc.protect.CommandAccessRule;
 import org.rigelmc.rank.PermissionGate;
 
 /**
  * Admin investigative/QoL tools - TFM ref: {@code Command_cmdspy}, {@code
  * Command_signspy}, {@code Command_potionspy}, {@code Command_whohas}, {@code
- * Command_findip}, {@code Command_radar}, each studied directly. {@code /bookspy} has no
- * TFM equivalent - added to close the same real gap a sign is already covered for (see
- * {@code SpyListener}'s javadoc). All Moderator+ except {@code /radar}, which TFM itself
- * leaves open to everyone.
+ * Command_findip}, {@code Command_radar}, {@code Command_gcmd}, each studied directly.
+ * {@code /bookspy} has no TFM equivalent - added to close the same real gap a sign is
+ * already covered for (see {@code SpyListener}'s javadoc). All Moderator+ except {@code
+ * /radar} (TFM itself leaves that open to everyone) and {@code /gcmd} (Senior Admin,
+ * matching TFM's own {@code Rank.SUPER_ADMIN} gate - see that command's own javadoc for
+ * why it needs a materially higher bar than the rest of this module).
  *
  * <p>{@code /findip} necessarily differs from TFM's own: RigelMCMod never stores
  * plaintext IPs (salted HMAC-SHA256 hashes only, see {@code identity.IpHasher}), so this
@@ -56,6 +61,8 @@ public final class InvestigateModule implements PluginModule {
     private final IpHistoryDao ipHistoryDao;
     private final IpHasher ipHasher;
     private final ExecutorService dbExecutor;
+    private final CommandAccessRegistry commandAccessRegistry;
+    private final AuditLogService auditLogService;
     private RigelMCMod plugin;
 
     public InvestigateModule(
@@ -64,13 +71,17 @@ public final class InvestigateModule implements PluginModule {
             @NotNull PlayerDao playerDao,
             @NotNull IpHistoryDao ipHistoryDao,
             @NotNull IpHasher ipHasher,
-            @NotNull ExecutorService dbExecutor) {
+            @NotNull ExecutorService dbExecutor,
+            @NotNull CommandAccessRegistry commandAccessRegistry,
+            @NotNull AuditLogService auditLogService) {
         this.permissionGate = permissionGate;
         this.spyService = spyService;
         this.playerDao = playerDao;
         this.ipHistoryDao = ipHistoryDao;
         this.ipHasher = ipHasher;
         this.dbExecutor = dbExecutor;
+        this.commandAccessRegistry = commandAccessRegistry;
+        this.auditLogService = auditLogService;
     }
 
     @Override
@@ -102,6 +113,7 @@ public final class InvestigateModule implements PluginModule {
         registrar.register(whoHasCommand(), "Find (or clear) online players holding a specific item - Moderator+");
         registrar.register(findIpCommand(), "Look up a player's known IP hashes - Moderator+", List.of("ips", "ip"));
         registrar.register(radarCommand(), "List nearby online players by distance");
+        registrar.register(gCmdCommand(), "Send a command as another online player - Senior Admin");
     }
 
     // ---- /cmdspy [all|off] --------------------------------------------------------------
@@ -311,6 +323,97 @@ public final class InvestigateModule implements PluginModule {
             int distance = (int) Math.round(other.getLocation().distance(origin));
             player.sendMessage(Component.text("  " + other.getName() + " - " + distance + " blocks", NamedTextColor.GRAY));
         }
+        return 1;
+    }
+
+    // ---- /gcmd <player> <command...> -------------------------------------------------------
+
+    /**
+     * TFM ref: {@code Command_gcmd}, studied directly from its real source - "send a
+     * command as someone else," gated to TFM's top rank ({@code Rank.SUPER_ADMIN}, here
+     * {@code senior_admin}) for the same reason this project gates it that high too: it
+     * dispatches an arbitrary command <i>as another player</i>, which is exactly why
+     * TFM's own implementation never just calls {@code dispatchCommand} outright - it
+     * re-validates the outgoing command against its own {@code CommandBlocker} first
+     * ({@code if (plugin.cb.isCommandBlocked(outCommand, sender)) { return true; }}).
+     *
+     * <p><b>Why that re-check is load-bearing, not defensive boilerplate</b>: {@link
+     * org.rigelmc.protect.BlockedCommandListener}'s entire enforcement runs off {@code
+     * PlayerCommandPreprocessEvent} - an event that only fires for a real player pressing
+     * enter on a typed command. It <b>never fires</b> for a command dispatched
+     * programmatically via {@link Bukkit#dispatchCommand}. Without an explicit re-check
+     * here, {@code /gcmd} would be a complete, silent bypass of every {@code
+     * protect.command-access} rule in the file - including every {@code n:b:...}
+     * "nobody" entry (e.g. {@code /stop}, {@code /restart}) - for anyone who can run
+     * {@code /gcmd} at all. {@link CommandAccessRegistry#matchRawCommand} exists
+     * specifically to close this off, matching TFM's real fix exactly.</p>
+     *
+     * <p>Checked against the <i>sender's</i> rank, not the target's - matching TFM's own
+     * real behavior (verified from its source, not guessed). {@code /gcmd}'s whole
+     * legitimate purpose is impersonating a lower-rank player (to test what they can/
+     * can't do, or to force a specific benign action), so gating on the target's rank
+     * instead would defeat that entirely; gating on the sender's still closes the actual
+     * vulnerability, since the sender is already at the top of the ladder and the only
+     * thing that can still block them is an unconditional "nobody" rule.</p>
+     */
+    private LiteralCommandNode<CommandSourceStack> gCmdCommand() {
+        return Commands.literal("gcmd")
+                .requires(source -> hasRank(source, "senior_admin"))
+                .executes(ctx -> CommandUsage.show(ctx.getSource().getSender(), "/gcmd <player> <command...>"))
+                .then(Commands.argument("player", StringArgumentType.word())
+                        .suggests(PlayerSuggestions.ONLINE_PLAYERS)
+                        .executes(ctx -> CommandUsage.show(ctx.getSource().getSender(), "/gcmd <player> <command...>"))
+                        .then(Commands.argument("command", StringArgumentType.greedyString())
+                                .executes(this::executeGCmd)))
+                .build();
+    }
+
+    private int executeGCmd(CommandContext<CommandSourceStack> ctx) {
+        CommandSender sender = ctx.getSource().getSender();
+        String targetName = StringArgumentType.getString(ctx, "player");
+        String outCommand = StringArgumentType.getString(ctx, "command");
+
+        Player target = Bukkit.getPlayerExact(targetName);
+        if (target == null) {
+            sender.sendMessage(Component.text(
+                    "'" + targetName + "' must be online to use /gcmd on them.", NamedTextColor.RED));
+            return 0;
+        }
+
+        Optional<CommandAccessRule> blockedBy = commandAccessRegistry.matchRawCommand(outCommand);
+        if (blockedBy.isPresent()) {
+            CommandAccessRule rule = blockedBy.get();
+            boolean senderClears = rule.requiredRankId() != null && hasRank(ctx.getSource(), rule.requiredRankId());
+            if (!senderClears) {
+                sender.sendMessage(Component.text(
+                        "That command is blocked by protect.command-access and cannot be forwarded via /gcmd.",
+                        NamedTextColor.RED));
+                return 0;
+            }
+        }
+
+        UUID actorUuid = sender instanceof Player player ? player.getUniqueId() : null;
+        UUID targetUuid = target.getUniqueId();
+        dbExecutor.submit(() -> {
+            try {
+                auditLogService.record(actorUuid, "GCMD", targetUuid, outCommand);
+            } catch (SQLException e) {
+                plugin.getLogger().log(Level.WARNING, "Failed to audit-log /gcmd", e);
+            }
+        });
+
+        sender.sendMessage(Component.text(
+                "Sending command as " + target.getName() + ": /" + outCommand, NamedTextColor.GOLD));
+        boolean dispatched;
+        try {
+            dispatched = Bukkit.dispatchCommand(target, outCommand);
+        } catch (RuntimeException e) {
+            sender.sendMessage(Component.text("Error sending command: " + e.getMessage(), NamedTextColor.RED));
+            return 0;
+        }
+        sender.sendMessage(dispatched
+                ? Component.text("Command sent.", NamedTextColor.GREEN)
+                : Component.text("Unknown error sending command.", NamedTextColor.RED));
         return 1;
     }
 

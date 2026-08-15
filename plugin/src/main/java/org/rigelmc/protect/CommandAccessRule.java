@@ -185,4 +185,19 @@ public final class CommandAccessRule {
     static Component defaultDeniedMessage() {
         return Component.text("You do not have permission to run that command.", NamedTextColor.RED);
     }
+
+    /**
+     * A synthetic "blocked for everyone, no rank exception" rule - used by {@link
+     * CommandAccessRegistry#matchRawCommand} for a namespaced ({@code plugin:command})
+     * invocation, which is blocked unconditionally rather than looked up from any
+     * configured rule. Matches {@code BlockedCommandListener}'s own separate handling of
+     * the exact same case for real player-typed input, just represented as a normal
+     * {@link CommandAccessRule} (requiredRankId {@code null} = nobody) instead of a
+     * one-off branch, so callers of {@code matchRawCommand} don't need their own special
+     * case for it.
+     */
+    @NotNull
+    static CommandAccessRule namespacedBlock(@NotNull String rawLabel) {
+        return new CommandAccessRule(null, CommandAccessAction.BLOCK, rawLabel, List.of(), null);
+    }
 }

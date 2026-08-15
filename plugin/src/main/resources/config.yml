@@ -414,6 +414,12 @@ protect:
     # separate allow.fire_place vs allow.fire_spread distinction.
     fire-spread:
       enabled: false
+    # Whether leaves disconnected from a log are allowed to naturally decay - off by
+    # default. No per-tree ownership on a Free-OP server, so a tree someone else placed/
+    # generated shouldn't be able to silently strip leaves out of a build that incorporates
+    # them (hedges, floating islands, decorative foliage). Set true to restore vanilla decay.
+    leaf-decay:
+      enabled: false
     # Movement validator + world border - out-of-bounds joins/teleports/moves are
     # relocated to spawn. "alert-only" logs/notifies staff without actually relocating,
     # for testing a new radius before enforcing it.
@@ -574,7 +580,11 @@ protect:
       - dragon_egg
       - scaffolding
     # Applies to WorldEdit's radius/size-taking commands (//sphere, //cyl, //pyramid,
-    # brush tools, etc.).
+    # brush tools, etc.). These two values (this and limits.max-volume below) can also be
+    # raised/lowered at runtime without editing this file, via the console/in-game
+    # "/worldeditlimit radius|volume <value>|reset" command (Senior Admin) - that override
+    # is session-only (resets to whatever's configured here on restart), so this file
+    # always stays the actual source of truth.
     radius-max: 200
     # Enforced per-block inside the actual EditSessionEvent extent chain (not just a
     # command-preprocess string check) - matches TFM's own WORLDEDIT_LIMIT_MAX/
@@ -585,6 +595,24 @@ protect:
       # Most container blocks (chests, hoppers, furnaces, ...) a single non-staff session
       # may place.
       max-containers: 500
+    # User-requested: much tighter WorldEdit caps near the server's configured spawn point
+    # (see /setspawn) - stops "massive WorldEdit commands near spawn" specifically, on top
+    # of the general radius-max/limits above. Moderator+ bypass this entirely, same as
+    # every other WorldEdit cap on this page.
+    spawn-protection:
+      enabled: true
+      # How close (blocks, spawn-point-centered) a command's target location has to be
+      # before the tighter max-radius/max-blocks below apply instead of radius-max/
+      # limits.max-volume.
+      radius: 200
+      # Command-preprocess radius cap (//sphere <radius>, etc.) once inside the zone above -
+      # replaces radius-max, not added to it.
+      max-radius: 15
+      # Extent-chain per-block cap once inside the zone above - only blocks actually
+      # falling within `radius` of the live spawn point count against this, regardless of
+      # the edit's overall selection size or origin. Replaces limits.max-volume, not added
+      # to it.
+      max-blocks: 300
 
   # /protectarea (see protect.area package docs). Everything about a region itself (flags,
   # membership, overlap policy) is DB-backed and managed entirely via the command, not here -
@@ -789,13 +817,24 @@ guild:
     # world.flatlands.generate-params below - passed straight through to CleanroomGenerator
     # when installed, falling back to vanilla superflat otherwise.
     generate-params: "16|stone|32|dirt|1|grass_block"
-    # The side length of one plot's buildable footprint, and the empty buffer kept between
-    # adjacent plots, both in blocks.
+    # The side length of one plot's buildable footprint, in blocks. A visible one-block
+    # wall borders every plot's edge (see guild.plot.PlotWorldTerrain) - only applies to
+    # chunks generated after a config change, so resizing this needs a
+    # "/wipeguildplots confirm" to actually regenerate the grid.
     plot-size: 300
-    plot-gap: 16
+    # The road/border buffer between adjacent plots, in blocks - one border column on each
+    # side, the rest open road in between (e.g. 7 = 1 border + 5 road + 1 border).
+    plot-gap: 7
     # How many plots fit in one row of the grid before it wraps to the next row.
     grid-columns: 10
-    # The flat ground level every plot sits on - also where /guild plot tp lands.
+    # Where a plot's *protection* column is centered (see GuildPlotWorldService's javadoc
+    # for the fixed band above/below this used for that) - NOT where visible terrain
+    # (roads/borders) actually gets painted, and NOT where /guild plot tp lands: both of
+    # those read the real generated ground height directly instead, since this value can
+    # silently mismatch reality (e.g. when the optional CleanroomGenerator plugin isn't
+    # installed, plot-world generation falls back to vanilla's own default flat height,
+    # not this number) - a real, user-reported bug (roads floating in mid-air) in an
+    # earlier version that trusted this value for terrain placement too.
     ground-y: 64
 
 # Vote-site streak/milestone rewards - see modules.vote above. Recorded via
@@ -890,9 +929,21 @@ announce:
     # the "configurable with colors" part: any MiniMessage tag works here, e.g.
     # <red>, <gold>, <bold>, <gradient:blue:aqua>, etc.
     prefix: "<gray>[<gold>Announcement</gold>]</gray> "
-    # Rotates through these in order, one every interval-minutes. Empty by default -
-    # add your own before enabling, or the broadcaster just has nothing to say.
-    messages: []
+    # Rotates through these in order, one every interval-minutes. A generic starter set of
+    # typical server-rules reminders ships here by default (no server name/IP/Discord link
+    # baked in, since those are specific to your own server) - edit freely, add your own,
+    # or clear the list back to [] if you'd rather write every message yourself. No
+    # placeholder substitution happens here (unlike tablist/scoreboard's {online}/{ip}) -
+    # each entry is parsed as plain MiniMessage, nothing more.
+    messages:
+    - "<yellow>Griefing, stealing, and destroying other players' builds is not allowed - report it to staff."
+    - "<yellow>Be respectful in chat - no harassment, hate speech, or excessive spam."
+    - "<yellow>Hacked clients, X-ray, and exploiting bugs for an advantage are not allowed."
+    - "<yellow>Advertising other servers is not allowed."
+    - "<yellow>Staff decisions are final in-game - use the ban appeal form if you disagree with a punishment."
+    - "<yellow>Impersonating staff or other players is not allowed."
+    - "<yellow>Found a bug or exploit? Report it to staff instead of abusing it."
+    - "<gray>Type <white>/discord</white> to link your Discord account."
 
 motd:
   enabled: true

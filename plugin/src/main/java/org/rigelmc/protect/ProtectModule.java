@@ -19,11 +19,21 @@ import org.rigelmc.rank.PermissionGate;
 public final class ProtectModule implements PluginModule {
 
     private final PermissionGate permissionGate;
-    private CommandAccessRegistry commandRegistry;
+    private final CommandAccessRegistry commandRegistry;
     private RigelMCMod plugin;
 
-    public ProtectModule(PermissionGate permissionGate) {
+    /**
+     * @param commandRegistry constructor-injected (rather than self-constructed, as
+     *     before) so other modules that need to consult it - e.g. {@code
+     *     investigate.InvestigateModule}'s {@code /gcmd}, which must re-validate an
+     *     outgoing command against it before dispatching, since {@link
+     *     BlockedCommandListener}'s own event hook never fires for a programmatically
+     *     dispatched command - can share this exact instance instead of each keeping a
+     *     separate, potentially out-of-sync copy.
+     */
+    public ProtectModule(PermissionGate permissionGate, CommandAccessRegistry commandRegistry) {
         this.permissionGate = permissionGate;
+        this.commandRegistry = commandRegistry;
     }
 
     @Override
@@ -59,7 +69,6 @@ public final class ProtectModule implements PluginModule {
                             PermissionDefault.FALSE));
         }
 
-        this.commandRegistry = new CommandAccessRegistry(plugin.getLogger());
         commandRegistry.reload(plugin.rigelConfig().protectCommandAccess(), this::aliasesOf);
         plugin.getServer()
                 .getPluginManager()
@@ -75,9 +84,7 @@ public final class ProtectModule implements PluginModule {
      */
     @Override
     public void onConfigReload(RigelConfig config) {
-        if (commandRegistry != null) {
-            commandRegistry.reload(config.protectCommandAccess(), this::aliasesOf);
-        }
+        commandRegistry.reload(config.protectCommandAccess(), this::aliasesOf);
     }
 
     /**

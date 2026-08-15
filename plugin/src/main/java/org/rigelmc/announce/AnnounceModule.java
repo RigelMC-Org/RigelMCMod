@@ -4,7 +4,13 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
+import java.util.regex.Pattern;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextReplacementConfig;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -20,6 +26,16 @@ import org.rigelmc.rank.PermissionGate;
  * module. "Configurable with colors" is MiniMessage: both the configured rotation
  * messages and {@code /announce}'s argument are parsed as MiniMessage, so operators can
  * use tags like {@code <red>}, {@code <bold>}, {@code <gradient:blue:aqua>}, etc.
+ *
+ * <p>User-requested: a bare {@code https://}/{@code http://} URL anywhere in an
+ * announcement (either a configured rotation message or a live {@code /announce}
+ * argument) is automatically made clickable ({@link #linkify}) - operators don't need to
+ * hand-write a MiniMessage {@code <click:open_url:'...'>} tag themselves. Applied via
+ * {@link Component#replaceText}, which matches against the already-parsed component
+ * tree rather than the raw MiniMessage source string, so a URL can never be misread as
+ * (or accidentally break) MiniMessage tag syntax, and any color/formatting tags already
+ * wrapping the URL text in the source are preserved on the parts that aren't the link
+ * itself.</p>
  */
 public final class AnnounceModule implements PluginModule {
 
@@ -93,6 +109,47 @@ public final class AnnounceModule implements PluginModule {
 
     private static void broadcast(String miniMessageText) {
         Component component = MiniMessage.miniMessage().deserialize(miniMessageText);
-        Bukkit.broadcast(component);
+        Bukkit.broadcast(linkify(component));
+    }
+
+    /**
+     * Matches a {@code http(s)://} URL, deliberately excluding common trailing sentence
+     * punctuation/closing brackets ({@code .,!?:;)]}) from the match itself, so "check out
+     * https://example.com." doesn't swallow the sentence-ending period into the link. Also
+     * excludes {@code <}/{@code >} throughout (not just at the end): this runs on the
+     * already-MiniMessage-parsed component tree, and MiniMessage is non-strict by default -
+     * an unresolvable/misspelled tag (e.g. a typo'd {@code </aqla>} for {@code </aqua>})
+     * isn't rejected, it's left behind as literal text. Without this exclusion, a URL
+     * sitting directly against one of those (no whitespace between) gets the stray tag text
+     * swallowed into the "URL" - which then blows up much later at packet-encode time (an
+     * {@code IllegalArgumentException} from {@code URI.create}, since {@link
+     * ClickEvent#openUrl} never validates its argument) instead of failing at
+     * broadcast-authoring time. The {@code URI.create} guard in {@link #linkify} below is
+     * the second, independent layer of the same defense.
+     */
+    static final Pattern URL_PATTERN = Pattern.compile("https?://[^\\s<>]+[^\\s.,!?:;)\\]<>]");
+
+    @NotNull
+    private static Component linkify(@NotNull Component input) {
+        return input.replaceText(TextReplacementConfig.builder()
+                .match(URL_PATTERN)
+                .replacement((matchResult, builder) -> {
+                    String url = matchResult.group();
+                    Component linkText =
+                            Component.text(url).color(NamedTextColor.AQUA).decorate(TextDecoration.UNDERLINED);
+                    try {
+                        // ClickEvent.openUrl never validates - this is what Paper itself
+                        // eventually does at packet-encode time, just done here instead so a
+                        // bad match degrades to plain (still-visible) text rather than
+                        // corrupting every packet this component is ever sent in.
+                        java.net.URI.create(url);
+                    } catch (IllegalArgumentException e) {
+                        return linkText;
+                    }
+                    return linkText
+                            .clickEvent(ClickEvent.openUrl(url))
+                            .hoverEvent(HoverEvent.showText(Component.text("Click to open", NamedTextColor.GRAY)));
+                })
+                .build());
     }
 }

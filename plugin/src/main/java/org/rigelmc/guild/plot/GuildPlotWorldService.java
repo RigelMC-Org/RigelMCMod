@@ -382,13 +382,15 @@ public final class GuildPlotWorldService {
             world = creator.createWorld();
             if (world != null) {
                 world.setSpawnFlags(false, false);
-                world.setSpawnLocation(0, config.guildPlotGroundY() + 1, 0);
+                // The real generated ground at the origin, not config's guild.plotworld.ground-y
+                // - see GuildPlotWorldPopulator's javadoc for why that config value can't be
+                // trusted to match reality (e.g. CleanroomGenerator not being installed).
+                world.setSpawnLocation(0, world.getHighestBlockYAt(0, 0) + 1, 0);
             }
             plugin.getLogger().info("Created guild plot world '" + name + "'.");
         }
         if (world != null) {
-            world.getPopulators().add(new GuildPlotWorldPopulator(
-                    config.guildPlotSize(), config.guildPlotGap(), config.guildPlotGroundY()));
+            world.getPopulators().add(new GuildPlotWorldPopulator(config.guildPlotSize(), config.guildPlotGap()));
         }
 
         try {
@@ -400,7 +402,13 @@ public final class GuildPlotWorldService {
         }
     }
 
-    /** @return the center of the given plot slot, one block above the flat ground - or empty if the plot world isn't loaded. */
+    /**
+     * @return the center of the given plot slot, one block above the real generated ground
+     *     (via {@link World#getHighestBlockYAt(int, int)}, never {@code
+     *     guild.plotworld.ground-y} - see {@link GuildPlotWorldPopulator}'s javadoc for why
+     *     that config value can't be trusted to match reality), or empty if the plot world
+     *     isn't loaded
+     */
     @NotNull
     public Optional<Location> plotTeleportLocation(@NotNull RigelMCMod plugin, int plotSlotIndex) {
         RigelConfig config = plugin.rigelConfig();
@@ -410,9 +418,12 @@ public final class GuildPlotWorldService {
         }
         PlotGridAllocator.PlotBounds bounds = PlotGridAllocator.boundsForSlot(
                 plotSlotIndex, config.guildPlotSize(), config.guildPlotGap(), config.guildPlotGridColumns());
-        double centerX = (bounds.minX() + bounds.maxX()) / 2.0 + 0.5;
-        double centerZ = (bounds.minZ() + bounds.maxZ()) / 2.0 + 0.5;
-        return Optional.of(new Location(world, centerX, config.guildPlotGroundY() + 1, centerZ));
+        int centerBlockX = (bounds.minX() + bounds.maxX()) / 2;
+        int centerBlockZ = (bounds.minZ() + bounds.maxZ()) / 2;
+        double centerX = centerBlockX + 0.5;
+        double centerZ = centerBlockZ + 0.5;
+        int groundY = world.getHighestBlockYAt(centerBlockX, centerBlockZ);
+        return Optional.of(new Location(world, centerX, groundY + 1, centerZ));
     }
 
     /** The outcome of {@link #evacuateAndUnloadWorld} - distinguishes "nothing to delete" from "still in use, do not delete anything." */

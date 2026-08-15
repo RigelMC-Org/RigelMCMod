@@ -146,6 +146,40 @@ public final class CommandAccessRegistry {
         return Optional.empty();
     }
 
+    /**
+     * Parses {@code rawCommand} (leading slash optional) the same way a real player-typed
+     * command is split - base label plus arguments, with a namespaced ({@code
+     * plugin:command}) invocation unconditionally blocked exactly like {@code
+     * BlockedCommandListener} treats one from real player input - and looks up whichever
+     * configured rule governs it, if any.
+     *
+     * <p>Exists as its own reusable, Bukkit-free method, separate from {@code
+     * BlockedCommandListener}'s {@code PlayerCommandPreprocessEvent} hook, because that
+     * event <b>never fires for a command dispatched programmatically</b> (e.g. via {@code
+     * Bukkit#dispatchCommand}) - anything that synthetically runs a command on a player's
+     * behalf must call this explicitly first, or the entire command-access system
+     * (including every {@code n:b:...} "nobody" entry, e.g. {@code /stop}) is silently,
+     * completely bypassed for it. This is exactly the vulnerability TFM's own real {@code
+     * Command_gcmd} closes by calling its own {@code CommandBlocker} before ever
+     * dispatching (confirmed by reading its source directly) - see {@code
+     * investigate.InvestigateModule}'s own {@code /gcmd} for RigelMCMod's equivalent.</p>
+     */
+    @NotNull
+    public Optional<CommandAccessRule> matchRawCommand(@NotNull String rawCommand) {
+        String withoutSlash = rawCommand.startsWith("/") ? rawCommand.substring(1) : rawCommand;
+        String[] parts = withoutSlash.trim().split("\\s+");
+        if (parts.length == 0 || parts[0].isEmpty()) {
+            return Optional.empty();
+        }
+        String rawLabel = parts[0].toLowerCase(Locale.ROOT);
+        if (rawLabel.contains(":")) {
+            return Optional.of(CommandAccessRule.namespacedBlock(rawLabel));
+        }
+        String[] args = new String[parts.length - 1];
+        System.arraycopy(parts, 1, args, 0, args.length);
+        return match(rawLabel, args);
+    }
+
     public int ruleCount() {
         int count = 0;
         for (List<CommandAccessRule> bucket : rulesByBaseCommand.values()) {

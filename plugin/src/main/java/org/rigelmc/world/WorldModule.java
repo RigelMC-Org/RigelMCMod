@@ -23,16 +23,19 @@ import org.rigelmc.core.RigelConfig;
 import org.rigelmc.rank.PermissionGate;
 
 /**
- * World-management module. Ships with the flatlands sandbox (wipe + teleport) and the
- * admin-only world (with a TFM-style guest system) in this pass; a general per-region
- * protection system lives in {@code protect/} instead (see {@code CommandAccessRegistry}
- * for command-level protection, and the area-protection feature for block-level).
+ * World-management module. Ships with the flatlands sandbox (wipe + teleport), the
+ * admin-only world (with a TFM-style guest system), spawn get/set, and - user-requested -
+ * a console/RCON-only wipe-and-regenerate for the primary world itself (see {@link
+ * RegularWorldWipeService}); a general per-region protection system lives in {@code
+ * protect/} instead (see {@code CommandAccessRegistry} for command-level protection, and
+ * the area-protection feature for block-level).
  */
 public final class WorldModule implements PluginModule {
 
     private final FlatlandsService flatlandsService;
     private final AdminWorldService adminWorldService;
     private final SpawnService spawnService;
+    private final RegularWorldWipeService regularWorldWipeService;
     private final PermissionGate permissionGate;
     private RigelMCMod plugin;
 
@@ -40,10 +43,12 @@ public final class WorldModule implements PluginModule {
             @NotNull FlatlandsService flatlandsService,
             @NotNull AdminWorldService adminWorldService,
             @NotNull SpawnService spawnService,
+            @NotNull RegularWorldWipeService regularWorldWipeService,
             @NotNull PermissionGate permissionGate) {
         this.flatlandsService = flatlandsService;
         this.adminWorldService = adminWorldService;
         this.spawnService = spawnService;
+        this.regularWorldWipeService = regularWorldWipeService;
         this.permissionGate = permissionGate;
     }
 
@@ -79,6 +84,7 @@ public final class WorldModule implements PluginModule {
     public void contributeCommands(Commands registrar) {
         registrar.register(wipeFlatlandsCommand(), "Immediately wipe and regenerate the flatlands world");
         registrar.register(flatlandsCommand(), "Teleport to the flatlands sandbox world");
+        registrar.register(wipeWorldCommand(), "Console/RCON only - wipe and regenerate the primary world");
         registrar.register(adminWorldCommand(), "Go to the admin-only world, or manage its guest list", List.of("aw"));
         registrar.register(setSpawnCommand(), "Set the server spawn to your current location - Senior Admin+");
         registrar.register(spawnCommand(), "Teleport to the server spawn, or send another player there - Moderator+");
@@ -215,6 +221,44 @@ public final class WorldModule implements PluginModule {
                     player.sendMessage(Component.text("Teleported to the flatlands world.", NamedTextColor.GREEN));
                     return 1;
                 })
+                .build();
+    }
+
+    /**
+     * User-requested: "allow wiping and regeneration of the regular world." Deliberately
+     * the most locked-down command in this whole class - see {@link
+     * RegularWorldWipeService}'s javadoc for the full reasoning. Two gates, both enforced
+     * inside the execute body rather than via {@code .requires()} (same reasoning as
+     * {@link #wipeFlatlandsCommand()} above - a failed {@code .requires()} just shows
+     * "Unknown or incomplete command" instead of a clear rejection):
+     *
+     * <ol>
+     *   <li>Console/RCON only, unconditionally - no config toggle, unlike {@code
+     *       /wipeflatlands}.</li>
+     *   <li>Two-step confirmation - bare {@code /wipeworld} only explains what it does and
+     *       does nothing destructive; {@code /wipeworld confirm} is the only way to
+     *       actually trigger it.</li>
+     * </ol>
+     */
+    private LiteralCommandNode<CommandSourceStack> wipeWorldCommand() {
+        return Commands.literal("wipeworld")
+                .executes(ctx -> {
+                    CommandSender sender = ctx.getSource().getSender();
+                    sender.sendMessage(Component.text(
+                            "This permanently deletes and regenerates the ENTIRE primary world - every player's"
+                                    + " builds in it will be lost. Run /wipeworld confirm to proceed.",
+                            NamedTextColor.RED));
+                    return 1;
+                })
+                .then(Commands.literal("confirm").executes(ctx -> {
+                    CommandSender sender = ctx.getSource().getSender();
+                    if (sender instanceof Player) {
+                        sender.sendMessage(Component.text(
+                                "/wipeworld can only be run from the server console or RCON.", NamedTextColor.RED));
+                        return 0;
+                    }
+                    return regularWorldWipeService.wipeNow(sender) ? 1 : 0;
+                }))
                 .build();
     }
 

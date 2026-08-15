@@ -23,6 +23,7 @@ import org.rigelmc.guild.GuildInviteManager;
 import org.rigelmc.guild.GuildMemberDao;
 import org.rigelmc.guild.GuildModule;
 import org.rigelmc.guild.GuildService;
+import org.rigelmc.guild.plot.GuildPlotBypassService;
 import org.rigelmc.guild.plot.GuildPlotWorldService;
 import org.rigelmc.guild.plot.PlotCosmeticDao;
 import org.rigelmc.guild.plot.PlotCosmeticService;
@@ -73,6 +74,7 @@ import org.rigelmc.skin.SkinModule;
 import org.rigelmc.nick.NickDao;
 import org.rigelmc.nick.NickModule;
 import org.rigelmc.nick.NickService;
+import org.rigelmc.protect.CommandAccessRegistry;
 import org.rigelmc.protect.ProtectModule;
 import org.rigelmc.protect.antigrief.AntiGriefModule;
 import org.rigelmc.protect.antigrief.EntityCleanupModule;
@@ -118,6 +120,7 @@ import org.rigelmc.vanish.VanishModule;
 import org.rigelmc.vanish.VanishService;
 import org.rigelmc.world.AdminWorldService;
 import org.rigelmc.world.FlatlandsService;
+import org.rigelmc.world.RegularWorldWipeService;
 import org.rigelmc.world.SpawnDao;
 import org.rigelmc.world.SpawnService;
 import org.rigelmc.world.WorldModule;
@@ -370,6 +373,7 @@ public final class RigelMCMod extends JavaPlugin {
         FlatlandsService flatlandsService = new FlatlandsService(this, new WorldStateDao(dataSource), dbExecutor);
         AdminWorldService adminWorldService = new AdminWorldService(this, permissionGate);
         SpawnService spawnService = new SpawnService(this, new SpawnDao(dataSource));
+        RegularWorldWipeService regularWorldWipeService = new RegularWorldWipeService(this, dbExecutor);
 
         PrefixService prefixService = new PrefixService(rankService, titleService);
         NickService nickService = new NickService(new NickDao(dataSource));
@@ -398,6 +402,7 @@ public final class RigelMCMod extends JavaPlugin {
         GuildPlotWorldService guildPlotWorldService = new GuildPlotWorldService(guildDao, protectAreaService);
         GuildService guildService = new GuildService(guildDao, guildMemberDao, guildPlotWorldService);
         PlotCosmeticService plotCosmeticService = new PlotCosmeticService(new PlotCosmeticDao(dataSource), economyService);
+        GuildPlotBypassService guildPlotBypassService = new GuildPlotBypassService();
         DisallowedDisguises disallowedDisguises = new DisallowedDisguises(rigelConfig());
 
         getServer()
@@ -422,7 +427,11 @@ public final class RigelMCMod extends JavaPlugin {
                                 loginMessageDao, dbExecutor),
                         this);
 
-        ProtectModule protectModule = new ProtectModule(permissionGate);
+        // Constructed here (not inside ProtectModule itself, as before) so
+        // InvestigateModule's /gcmd can share this exact instance - see ProtectModule's
+        // own constructor javadoc for why.
+        CommandAccessRegistry commandAccessRegistry = new CommandAccessRegistry(getLogger());
+        ProtectModule protectModule = new ProtectModule(permissionGate, commandAccessRegistry);
 
         List<PluginModule> built = new ArrayList<>();
         built.add(new PunishModule(
@@ -435,7 +444,7 @@ public final class RigelMCMod extends JavaPlugin {
         built.add(new DiscordModule(
                 discordLinkService, discordBotManager, rankService, permissionGate, auditLogService, dbExecutor,
                 vanishService, inviteCreditService));
-        built.add(new WorldModule(flatlandsService, adminWorldService, spawnService, permissionGate));
+        built.add(new WorldModule(flatlandsService, adminWorldService, spawnService, regularWorldWipeService, permissionGate));
         built.add(new AnnounceModule(permissionGate));
         built.add(new AutoOpModule(permissionGate, prefixService, displayService));
         built.add(new RankAdminModule(
@@ -449,11 +458,13 @@ public final class RigelMCMod extends JavaPlugin {
         built.add(new RmcmModule(permissionGate));
         built.add(new AntiGriefModule(permissionGate, banService, dbExecutor));
         built.add(new CrashProtectModule(permissionGate));
-        built.add(new WorldEditProtectModule(permissionGate, strikeService, protectAreaService));
+        built.add(new WorldEditProtectModule(permissionGate, strikeService, protectAreaService, spawnService));
         built.add(new ProtectAreaModule(permissionGate, protectAreaService, auditLogService, dbExecutor));
         built.add(new DisguiseModule(permissionGate, auditLogService, dbExecutor, disallowedDisguises));
         built.add(new SkinModule());
-        built.add(new InvestigateModule(permissionGate, new SpyService(), playerDao, ipHistoryDao, ipHasher, dbExecutor));
+        built.add(new InvestigateModule(
+                permissionGate, new SpyService(), playerDao, ipHistoryDao, ipHasher, dbExecutor,
+                commandAccessRegistry, auditLogService));
         built.add(new WebPanelModule(
                 playerDao, banDao, new MuteDao(dataSource), permissionGate, titleService, dbExecutor));
         built.add(new AppealModule(appealService, ipHasher));
@@ -462,7 +473,7 @@ public final class RigelMCMod extends JavaPlugin {
         built.add(new VoteModule(voteRecordService, playerDao, dbExecutor));
         built.add(new GuildModule(
                 guildService, guildInviteManager, guildPlotWorldService, plotCosmeticService, playerDao, permissionGate,
-                auditLogService, dbExecutor));
+                auditLogService, dbExecutor, guildPlotBypassService, protectAreaService));
         built.add(new EntityCleanupModule(permissionGate));
         built.add(new LockdownModule(rankService, permissionGate));
         built.add(new TickFreezeModule(permissionGate));

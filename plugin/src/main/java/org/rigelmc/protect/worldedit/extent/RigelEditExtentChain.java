@@ -5,14 +5,20 @@ import com.sk89q.worldedit.entity.Player;
 import com.sk89q.worldedit.event.extent.EditSessionEvent;
 import com.sk89q.worldedit.extension.platform.Actor;
 import com.sk89q.worldedit.extent.Extent;
+import com.sk89q.worldedit.math.BlockVector3;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import org.bukkit.Location;
 import org.jetbrains.annotations.NotNull;
 import org.rigelmc.RigelMCMod;
+import org.rigelmc.core.RigelConfig;
 import org.rigelmc.protect.area.ProtectAreaService;
 import org.rigelmc.protect.worldedit.WorldEditAbuseGuard;
+import org.rigelmc.protect.worldedit.WorldEditLimitOverrideService;
 import org.rigelmc.rank.PermissionGate;
+import org.rigelmc.world.SpawnService;
 
 /**
  * Assembles and installs the {@link Extent} chain wrapped around every WorldEdit/FAWE edit
@@ -39,7 +45,8 @@ public final class RigelEditExtentChain {
      */
     public static void wrap(
             @NotNull EditSessionEvent event, @NotNull RigelMCMod plugin,
-            @NotNull ProtectAreaService protectAreaService, @NotNull PermissionGate permissionGate) {
+            @NotNull ProtectAreaService protectAreaService, @NotNull PermissionGate permissionGate,
+            @NotNull WorldEditLimitOverrideService limitOverrideService, @NotNull SpawnService spawnService) {
         if (event.getStage() != EditSession.Stage.BEFORE_CHANGE) {
             return;
         }
@@ -56,7 +63,8 @@ public final class RigelEditExtentChain {
         Extent wrapped = new ProtectAreaExtent(event.getExtent(), plugin, protectAreaService, uuid, world);
 
         if (!permissionGate.hasAtLeastCached(uuid, "moderator")) {
-            wrapped = new VolumeLimitExtent(wrapped, plugin, uuid, plugin.rigelConfig().worldEditMaxVolume());
+            int volumeMax = limitOverrideService.effectiveVolumeMax(plugin.rigelConfig().worldEditMaxVolume());
+            wrapped = new VolumeLimitExtent(wrapped, plugin, uuid, volumeMax);
 
             int containerCap = plugin.rigelConfig().worldEditMaxContainers();
             if (containerCap >= 0) {
@@ -67,9 +75,38 @@ public final class RigelEditExtentChain {
             if (!blocked.isEmpty()) {
                 wrapped = new BlockedTypeExtent(wrapped, plugin, uuid, blocked);
             }
+
+            wrapped = maybeWrapSpawnProtection(wrapped, plugin, spawnService, uuid, world);
         }
 
         event.setExtent(wrapped);
+    }
+
+    /**
+     * User-requested: the deeper, per-block-position half of spawn protection - see
+     * {@code WorldEditAbuseGuard#checkRadius}'s javadoc for the command-preprocess-layer
+     * half. No-ops (returns {@code wrapped} untouched) unless spawn-protection is
+     * enabled, {@code /setspawn} has actually been run, and this edit's world matches
+     * the spawn's world - comparing by world <i>name</i> (matching {@link
+     * ProtectAreaExtent}'s own {@code world} field, a plain {@link String}), since {@code
+     * event.getWorld()} is a WorldEdit {@code World}, not a Bukkit one.
+     */
+    private static Extent maybeWrapSpawnProtection(
+            Extent wrapped, RigelMCMod plugin, SpawnService spawnService, UUID uuid, String world) {
+        RigelConfig config = plugin.rigelConfig();
+        if (!config.worldEditSpawnProtectionEnabled()) {
+            return wrapped;
+        }
+        Optional<Location> spawn = spawnService.spawnLocation();
+        if (spawn.isEmpty() || spawn.get().getWorld() == null || !spawn.get().getWorld().getName().equals(world)) {
+            return wrapped;
+        }
+        Location spawnLocation = spawn.get();
+        BlockVector3 spawnVector =
+                BlockVector3.at(spawnLocation.getBlockX(), spawnLocation.getBlockY(), spawnLocation.getBlockZ());
+        return new SpawnProtectionExtent(
+                wrapped, plugin, uuid, spawnVector, config.worldEditSpawnProtectionRadius(),
+                config.worldEditSpawnProtectionMaxBlocks());
     }
 
     private static Set<String> normalizedBlockedTypes(RigelMCMod plugin) {

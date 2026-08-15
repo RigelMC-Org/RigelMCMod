@@ -133,4 +133,57 @@ class CommandAccessRegistryTest {
         assertFalse(registry.match("old", new String[0]).isPresent());
         assertTrue(registry.match("new", new String[0]).isPresent());
     }
+
+    // ---- matchRawCommand - the /gcmd exploit-patch entry point -----------------------------
+
+    @Test
+    void matchRawCommandFindsTheSameRuleAsMatchGivenARawCommandString() {
+        CommandAccessRegistry registry = new CommandAccessRegistry(LOGGER);
+        registry.reload(List.of("n:b:/stop:_"));
+
+        assertTrue(registry.matchRawCommand("/stop").isPresent());
+        assertTrue(registry.matchRawCommand("stop").isPresent()); // leading slash optional
+    }
+
+    @Test
+    void matchRawCommandRespectsArgumentPatterns() {
+        CommandAccessRegistry registry = new CommandAccessRegistry(LOGGER);
+        registry.reload(List.of("s:b:/mail sendall:_"));
+
+        assertTrue(registry.matchRawCommand("/mail sendall").isPresent());
+        assertFalse(registry.matchRawCommand("/mail send Steve hi").isPresent());
+    }
+
+    @Test
+    void matchRawCommandReturnsEmptyForAnUnconfiguredCommand() {
+        CommandAccessRegistry registry = new CommandAccessRegistry(LOGGER);
+        registry.reload(List.of("n:b:/stop:_"));
+
+        assertFalse(registry.matchRawCommand("/say hello").isPresent());
+    }
+
+    @Test
+    void matchRawCommandUnconditionallyBlocksANamespacedInvocation() {
+        CommandAccessRegistry registry = new CommandAccessRegistry(LOGGER);
+        registry.reload(List.of()); // no configured rules at all - the block isn't rule-driven
+
+        CommandAccessRule rule = registry.matchRawCommand("/essentials:tp Steve").orElseThrow();
+        assertNull(rule.requiredRankId()); // "nobody" - blocked regardless of rank
+    }
+
+    /**
+     * The actual /gcmd regression case: without {@code matchRawCommand} being called
+     * explicitly by anything that dispatches a command programmatically, a "nobody"-tier
+     * rule like this would never be consulted at all for such a dispatch (see {@code
+     * investigate.InvestigateModule#executeGCmd}'s own javadoc for why {@code
+     * PlayerCommandPreprocessEvent}-based enforcement structurally can't catch it).
+     */
+    @Test
+    void matchRawCommandCatchesANobodyTierRuleRegardlessOfLeadingSlashOrArgs() {
+        CommandAccessRegistry registry = new CommandAccessRegistry(LOGGER);
+        registry.reload(List.of("n:b:/stop:_"));
+
+        CommandAccessRule rule = registry.matchRawCommand("stop now please").orElseThrow();
+        assertNull(rule.requiredRankId());
+    }
 }

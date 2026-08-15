@@ -335,6 +335,17 @@ public final class RigelConfig {
         return source.getBoolean("protect.anti-grief.fire-spread.enabled", false);
     }
 
+    /**
+     * @return {@code protect.anti-grief.leaf-decay.enabled} - whether leaves are allowed to
+     *     naturally decay when no longer connected to a log (user-requested: builds using
+     *     leaves - hedges, floating islands, decorative foliage - shouldn't silently fall
+     *     apart on a Free-OP server where nobody necessarily owns the surrounding trees).
+     *     Default {@code false} - decay off unless explicitly turned on.
+     */
+    public boolean leafDecayEnabled() {
+        return source.getBoolean("protect.anti-grief.leaf-decay.enabled", false);
+    }
+
     public boolean movementGuardEnabled() {
         return source.getBoolean("protect.anti-grief.movement.enabled", true);
     }
@@ -574,6 +585,47 @@ public final class RigelConfig {
      */
     public int worldEditMaxContainers() {
         return source.getInt("protect.worldedit.limits.max-containers", 500);
+    }
+
+    /**
+     * @return {@code protect.worldedit.spawn-protection.enabled} - user-requested: much
+     *     stricter WorldEdit caps specifically near the server's configured spawn point
+     *     (see {@code world.SpawnService}), on top of the general limits above. Default
+     *     {@code true}; has no effect at all until an operator actually runs
+     *     {@code /setspawn} - there's nothing to measure distance from before then.
+     */
+    public boolean worldEditSpawnProtectionEnabled() {
+        return source.getBoolean("protect.worldedit.spawn-protection.enabled", true);
+    }
+
+    /** @return {@code protect.worldedit.spawn-protection.radius} - distance in blocks from spawn the stricter caps below apply within. */
+    public int worldEditSpawnProtectionRadius() {
+        return source.getInt("protect.worldedit.spawn-protection.radius", 200);
+    }
+
+    /**
+     * @return {@code protect.worldedit.spawn-protection.max-radius} - a much tighter cap
+     *     than {@link #worldEditRadiusMax()} on radius/size-taking commands, applied only
+     *     when the player is currently standing within {@link
+     *     #worldEditSpawnProtectionRadius()} of spawn. The command-preprocess-layer half
+     *     of spawn protection - a cheap early check, active even when the deeper
+     *     extent-chain tier ({@link #worldEditSpawnProtectionMaxBlocks()}) isn't (e.g.
+     *     WorldEdit/FAWE not installed). 0/negative disables this specific check.
+     */
+    public int worldEditSpawnProtectionMaxRadius() {
+        return source.getInt("protect.worldedit.spawn-protection.max-radius", 15);
+    }
+
+    /**
+     * @return {@code protect.worldedit.spawn-protection.max-blocks} - the most blocks a
+     *     single non-staff WorldEdit/FAWE edit may write <i>within {@link
+     *     #worldEditSpawnProtectionRadius()} of spawn</i>, enforced per-block inside the
+     *     actual {@code EditSessionEvent} extent chain regardless of the edit's overall
+     *     selection size or where it originates - see {@code
+     *     protect.worldedit.extent.SpawnProtectionExtent}.
+     */
+    public int worldEditSpawnProtectionMaxBlocks() {
+        return source.getInt("protect.worldedit.spawn-protection.max-blocks", 300);
     }
 
     /**
@@ -1114,9 +1166,13 @@ public final class RigelConfig {
         return source.getInt("guild.plotworld.plot-size", 300);
     }
 
-    /** @return {@code guild.plotworld.plot-gap} - the empty buffer between adjacent plots, in blocks. */
+    /**
+     * @return {@code guild.plotworld.plot-gap} - the road/border buffer between adjacent
+     *     plots, in blocks - user-requested default of 7 (one border column on each side,
+     *     five open road columns between - see {@code guild.plot.PlotWorldTerrain}).
+     */
     public int guildPlotGap() {
-        return source.getInt("guild.plotworld.plot-gap", 16);
+        return source.getInt("guild.plotworld.plot-gap", 7);
     }
 
     /** @return {@code guild.plotworld.grid-columns} - how many plots per row before the grid wraps to the next row. */

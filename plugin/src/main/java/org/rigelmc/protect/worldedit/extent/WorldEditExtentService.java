@@ -7,7 +7,9 @@ import org.bukkit.Bukkit;
 import org.jetbrains.annotations.NotNull;
 import org.rigelmc.RigelMCMod;
 import org.rigelmc.protect.area.ProtectAreaService;
+import org.rigelmc.protect.worldedit.WorldEditLimitOverrideService;
 import org.rigelmc.rank.PermissionGate;
+import org.rigelmc.world.SpawnService;
 import org.rigelmc.worldedit.WorldEditBridge;
 
 /**
@@ -33,15 +35,20 @@ public final class WorldEditExtentService {
     private final RigelMCMod plugin;
     private final ProtectAreaService protectAreaService;
     private final PermissionGate permissionGate;
+    private final WorldEditLimitOverrideService limitOverrideService;
+    private final SpawnService spawnService;
     private final WorldEditBridge worldEditBridge;
     private int attempts;
 
     public WorldEditExtentService(
             @NotNull RigelMCMod plugin, @NotNull ProtectAreaService protectAreaService,
-            @NotNull PermissionGate permissionGate) {
+            @NotNull PermissionGate permissionGate, @NotNull WorldEditLimitOverrideService limitOverrideService,
+            @NotNull SpawnService spawnService) {
         this.plugin = plugin;
         this.protectAreaService = protectAreaService;
         this.permissionGate = permissionGate;
+        this.limitOverrideService = limitOverrideService;
+        this.spawnService = spawnService;
         this.worldEditBridge = new WorldEditBridge();
     }
 
@@ -76,7 +83,8 @@ public final class WorldEditExtentService {
             WorldEdit.getInstance().getEventBus().register(new Object() {
                 @Subscribe
                 public void onEditSession(EditSessionEvent event) {
-                    RigelEditExtentChain.wrap(event, plugin, protectAreaService, permissionGate);
+                    RigelEditExtentChain.wrap(
+                            event, plugin, protectAreaService, permissionGate, limitOverrideService, spawnService);
                 }
             });
             plugin.getLogger()
