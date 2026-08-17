@@ -2,6 +2,7 @@ package org.rigelmc.guild.plot;
 
 import java.util.Random;
 import org.bukkit.Material;
+import org.bukkit.RegionAccessor;
 import org.bukkit.generator.BlockPopulator;
 import org.bukkit.generator.LimitedRegion;
 import org.bukkit.generator.WorldInfo;
@@ -24,6 +25,14 @@ import org.jetbrains.annotations.NotNull;
  * Bukkit never re-populates an already-generated chunk. A plot world that existed before
  * this feature shipped keeps its old, road-less terrain until {@code /wipeguildplots
  * confirm} deletes and regenerates it from scratch.</p>
+ *
+ * <p><b>That "after it was attached" caveat has one unavoidable blind spot</b>, and it was
+ * a real, user-reported bug: Bukkit generates a world's spawn-chunk region during {@code
+ * WorldCreator#createWorld()} itself, so those chunks always predate this populator no
+ * matter how early it's attached. {@code
+ * GuildPlotWorldService#paintPreGeneratedSpawnChunks} runs {@link #paintChunk} over exactly
+ * that set immediately after attaching, as a second pass - see its javadoc for the full
+ * story and for why it's scoped to a freshly-created world only.</p>
  *
  * <p><b>Deliberately reads each column's real generated ground height at population time
  * ({@link LimitedRegion#getHighestBlockYAt}) rather than trusting {@code
@@ -67,6 +76,26 @@ public final class GuildPlotWorldPopulator extends BlockPopulator {
     public void populate(
             @NotNull WorldInfo worldInfo, @NotNull Random random, int chunkX, int chunkZ,
             @NotNull LimitedRegion limitedRegion) {
+        paintChunk(worldInfo, limitedRegion, chunkX, chunkZ, plotSize, plotGap);
+    }
+
+    /**
+     * Paints one chunk's worth of road/border columns.
+     *
+     * <p>Split out of {@link #populate} and written against {@link RegionAccessor} - the
+     * common supertype of both {@link LimitedRegion} (what a populator gets) and {@link
+     * org.bukkit.World} (what a plain live world is) - so {@code
+     * GuildPlotWorldService#ensureWorldExists} can run the <i>exact same</i> logic, not a
+     * reimplementation of it, over the spawn chunks Bukkit pre-generates during {@code
+     * WorldCreator#createWorld()}. Those chunks already exist by the time a populator can
+     * possibly be attached, and Bukkit never re-populates an existing chunk (see this
+     * class's own javadoc), so without that second pass they keep bare, road-less terrain
+     * forever - a real, user-reported bug that showed up as exactly one broken plot corner,
+     * the one nearest world origin, with every other corner in the world correct.</p>
+     */
+    public static void paintChunk(
+            @NotNull WorldInfo worldInfo, @NotNull RegionAccessor region, int chunkX, int chunkZ,
+            int plotSize, int plotGap) {
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
         for (int dx = 0; dx < 16; dx++) {
@@ -75,20 +104,20 @@ public final class GuildPlotWorldPopulator extends BlockPopulator {
                 int worldZ = baseZ + dz;
                 // The real top of whatever the generator already produced for this column -
                 // see class javadoc for why this is never trusted from config instead.
-                int groundY = limitedRegion.getHighestBlockYAt(worldX, worldZ);
+                int groundY = region.getHighestBlockYAt(worldX, worldZ);
                 if (groundY <= worldInfo.getMinHeight() || groundY + 1 > worldInfo.getMaxHeight()) {
                     continue; // no solid ground found here (or no room for a wall above it) - leave untouched
                 }
                 PlotWorldTerrain.CellType type = PlotWorldTerrain.classify(worldX, worldZ, plotSize, plotGap);
                 switch (type) {
-                    case ROAD -> limitedRegion.setType(worldX, groundY, worldZ, ROAD_MATERIAL);
+                    case ROAD -> region.setType(worldX, groundY, worldZ, ROAD_MATERIAL);
                     case BORDER -> {
                         // Solid all the way down to bedrock (user-requested), not just a
                         // one-block footing under the wall - see class javadoc.
                         for (int y = worldInfo.getMinHeight(); y <= groundY; y++) {
-                            limitedRegion.setType(worldX, y, worldZ, BORDER_FOUNDATION_MATERIAL);
+                            region.setType(worldX, y, worldZ, BORDER_FOUNDATION_MATERIAL);
                         }
-                        limitedRegion.setType(worldX, groundY + 1, worldZ, BORDER_WALL_MATERIAL);
+                        region.setType(worldX, groundY + 1, worldZ, BORDER_WALL_MATERIAL);
                     }
                     case PLOT -> {
                         // Leave the generator's own ground (grass, by default) untouched.

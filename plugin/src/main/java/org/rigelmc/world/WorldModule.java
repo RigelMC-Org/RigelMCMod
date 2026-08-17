@@ -7,14 +7,18 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.rigelmc.RigelMCMod;
 import org.rigelmc.command.CommandUsage;
 import org.rigelmc.command.PlayerSuggestions;
@@ -77,7 +81,7 @@ public final class WorldModule implements PluginModule {
         presenceGuard.start(plugin);
         plugin.getServer()
                 .getPluginManager()
-                .registerEvents(new SpawnJoinListener(plugin, spawnService), plugin);
+                .registerEvents(new SpawnJoinListener(plugin, spawnService, flatlandsService), plugin);
     }
 
     @Override
@@ -88,6 +92,7 @@ public final class WorldModule implements PluginModule {
         registrar.register(adminWorldCommand(), "Go to the admin-only world, or manage its guest list", List.of("aw"));
         registrar.register(setSpawnCommand(), "Set the server spawn to your current location - Senior Admin+");
         registrar.register(spawnCommand(), "Teleport to the server spawn, or send another player there - Moderator+");
+        registrar.register(worldCommand(), "Teleport to the Nether or the End");
     }
 
     // ---- /setspawn ------------------------------------------------------------------------
@@ -375,6 +380,112 @@ public final class WorldModule implements PluginModule {
         adminWorldService.purgeGuests();
         sender.sendMessage(Component.text("Admin world guest list purged.", NamedTextColor.AQUA));
         return 1;
+    }
+
+    // ---- /world <nether|end> -------------------------------------------------------------
+
+    /**
+     * User-requested: fast-travel to the Nether or the End without needing a portal - open
+     * to everyone (no rank gate), matching {@code /flatlands}'s own "player only" requirement.
+     */
+    private LiteralCommandNode<CommandSourceStack> worldCommand() {
+        return Commands.literal("world")
+                .requires(source -> source.getSender() instanceof Player)
+                .executes(ctx -> CommandUsage.show(ctx.getSource().getSender(), "/world <end|nether>"))
+                .then(Commands.literal("nether")
+                        .executes(ctx -> executeGoToDimension(ctx, World.Environment.NETHER, "Nether")))
+                .then(Commands.literal("end")
+                        .executes(ctx -> executeGoToDimension(ctx, World.Environment.THE_END, "End")))
+                .build();
+    }
+
+    private int executeGoToDimension(CommandContext<CommandSourceStack> ctx, World.Environment environment, String label) {
+        Player player = (Player) ctx.getSource().getSender();
+        Optional<World> target = Bukkit.getWorlds().stream()
+                .filter(world -> world.getEnvironment() == environment)
+                .findFirst();
+        if (target.isEmpty()) {
+            player.sendMessage(Component.text("The " + label + " isn't available on this server.", NamedTextColor.RED));
+            return 0;
+        }
+        World world = target.get();
+        Location destination = findSafeLocation(world, world.getSpawnLocation());
+        if (destination == null) {
+            player.sendMessage(Component.text(
+                    "Couldn't find a clearly safe spot near the " + label + "'s spawn - sending you there anyway,"
+                            + " watch your step.",
+                    NamedTextColor.YELLOW));
+            destination = world.getSpawnLocation();
+        }
+        player.teleport(destination);
+        player.sendMessage(Component.text("Teleported to the " + label + ".", NamedTextColor.GREEN));
+        return 1;
+    }
+
+    /** How far up/down from the starting Y to scan for a safe spot, in blocks. */
+    private static final int SAFE_LOCATION_VERTICAL_RANGE = 48;
+
+    /** How many rings of neighboring columns to try if the starting column has nothing safe. */
+    private static final int SAFE_LOCATION_COLUMN_RADIUS = 4;
+
+    /**
+     * User-requested (a bounded safe-spot scan, not a raw {@code World#getSpawnLocation()}
+     * call): the Nether has no equivalent of the End's small, always-safe obsidian spawn
+     * platform - its own {@code getSpawnLocation()} can land squarely inside solid netherrack
+     * or a lava sea. No existing "safe teleport" utility exists anywhere else in this
+     * codebase to reuse (every other teleport in this project either reuses a
+     * previously-stored {@code Location} or a custom-flat-world's own known-safe ground) -
+     * this is a fresh, narrowly-scoped one, not meant as a general-purpose utility.
+     *
+     * <p>Checks {@code start}'s own column first - the End's real spawn passes immediately
+     * there, so this is effectively free for that dimension - then scans vertically at that
+     * column, then expands outward to nearby columns. Bounded throughout by {@link
+     * #SAFE_LOCATION_VERTICAL_RANGE}/{@link #SAFE_LOCATION_COLUMN_RADIUS}, never a full-world
+     * search.</p>
+     *
+     * @return a safe location, or {@code null} if nothing was found within bounds (caller
+     *     falls back to {@code start} anyway with a warning, rather than refusing outright)
+     */
+    @Nullable
+    private static Location findSafeLocation(@NotNull World world, @NotNull Location start) {
+        int startX = start.getBlockX();
+        int startZ = start.getBlockZ();
+        for (int ring = 0; ring <= SAFE_LOCATION_COLUMN_RADIUS; ring++) {
+            for (int dx = -ring; dx <= ring; dx++) {
+                for (int dz = -ring; dz <= ring; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) {
+                        continue; // only this ring's outer edge - closer rings already checked
+                    }
+                    Location found = scanColumn(world, startX + dx, startZ + dz, start.getBlockY());
+                    if (found != null) {
+                        return found;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Location scanColumn(@NotNull World world, int x, int z, int centerY) {
+        int minY = Math.max(world.getMinHeight(), centerY - SAFE_LOCATION_VERTICAL_RANGE);
+        int maxY = Math.min(world.getMaxHeight() - 1, centerY + SAFE_LOCATION_VERTICAL_RANGE);
+        for (int y = minY; y <= maxY; y++) {
+            if (isSafeStandingSpot(world, x, y, z)) {
+                return new Location(world, x + 0.5, y, z + 0.5);
+            }
+        }
+        return null;
+    }
+
+    /** Two non-liquid, passable blocks (feet + head) over a solid, non-liquid floor. */
+    private static boolean isSafeStandingSpot(@NotNull World world, int x, int y, int z) {
+        Block feet = world.getBlockAt(x, y, z);
+        Block head = world.getBlockAt(x, y + 1, z);
+        Block floor = world.getBlockAt(x, y - 1, z);
+        return feet.isPassable() && !feet.isLiquid()
+                && head.isPassable() && !head.isLiquid()
+                && floor.isSolid() && !floor.isLiquid();
     }
 
     private static String nameOf(UUID uuid) {

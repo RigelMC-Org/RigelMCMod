@@ -250,6 +250,16 @@ public final class BanService {
         return banDao.findActiveByIp(ipHash, nowEpochMillis).isPresent();
     }
 
+    /**
+     * @return this player's full ban history (active, expired, and revoked alike), most
+     *     recent first, capped at {@code limit} - for {@code /banhistory} (Moderator+, see
+     *     {@code punish.PunishModule}).
+     */
+    @NotNull
+    public List<Ban> history(@NotNull UUID uuid, int limit) throws SQLException {
+        return banDao.findHistoryByUuid(uuid, limit);
+    }
+
     private Ban insertLinked(
             String caseId,
             BanType type,

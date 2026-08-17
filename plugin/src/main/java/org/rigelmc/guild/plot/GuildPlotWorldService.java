@@ -16,6 +16,7 @@ import java.util.logging.Logger;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
@@ -363,8 +364,11 @@ public final class GuildPlotWorldService {
      * {@code FlatlandsService#ensureWorldExists}), (re-)attaches {@link
      * GuildPlotWorldPopulator} so every chunk generated from this point forward gets a
      * visible road/border network (see that class's own javadoc for why this runs on every
-     * enable, not just world creation, and why it never touches already-generated chunks),
-     * then unconditionally calls {@link #ensureBoundaryProtectionExists} - every time, not
+     * enable, not just world creation, and why it never touches already-generated chunks) -
+     * plus, for a world this call actually created, a one-time {@link
+     * #paintPreGeneratedSpawnChunks} second pass over the spawn chunks Bukkit generated
+     * during {@code createWorld()} itself, which no populator can ever reach. Then
+     * unconditionally calls {@link #ensureBoundaryProtectionExists} - every time, not
      * just when the world itself needed creating, since the boundary is its own separate DB
      * row that can independently be missing (e.g. after {@link #resetAll} clears it) even
      * when the Bukkit world already exists. Failures there are logged, not fatal to plugin
@@ -374,7 +378,8 @@ public final class GuildPlotWorldService {
         RigelConfig config = plugin.rigelConfig();
         String name = config.guildPlotWorldName();
         World world = Bukkit.getWorld(name);
-        if (world == null) {
+        boolean justCreated = world == null;
+        if (justCreated) {
             WorldCreator creator = new WorldCreator(name).generateStructures(false);
             cleanroomGeneratorBridge.resolveGenerator(name, config.guildPlotGenerationParams())
                     .ifPresentOrElse(creator::generator, () -> creator.type(WorldType.FLAT));
@@ -391,6 +396,10 @@ public final class GuildPlotWorldService {
         }
         if (world != null) {
             world.getPopulators().add(new GuildPlotWorldPopulator(config.guildPlotSize(), config.guildPlotGap()));
+            if (justCreated) {
+                paintPreGeneratedSpawnChunks(
+                        world, config.guildPlotSize(), config.guildPlotGap(), plugin.getLogger());
+            }
         }
 
         try {
@@ -400,6 +409,44 @@ public final class GuildPlotWorldService {
                     + " exists - guild plots may not be fully protected until this is fixed and the plugin"
                     + " restarts.", e);
         }
+    }
+
+    /**
+     * Second pass closing a real, user-reported bug: Bukkit generates a world's spawn-chunk
+     * region <i>during</i> {@link WorldCreator#createWorld()} (and the {@code
+     * World#getHighestBlockYAt} call on the very next line forces the origin chunk too),
+     * necessarily <i>before</i> {@link GuildPlotWorldPopulator} can be attached to the
+     * finished world - and Bukkit never re-populates an already-generated chunk (see that
+     * class's own javadoc). Those chunks therefore keep bare, road-less terrain forever.
+     *
+     * <p>It surfaced as exactly one broken plot corner - the intersection square nearest
+     * world origin, on the very first plot - with every other corner in the world correct,
+     * which is what distinguishes it from the earlier {@link PlotWorldTerrain} corner bug
+     * (that one affected <i>every</i> intersection, since it was a classification error
+     * rather than a timing one).</p>
+     *
+     * <p>Runs {@link GuildPlotWorldPopulator#paintChunk} - the same code the populator
+     * itself runs, not a reimplementation - over precisely {@link World#getLoadedChunks()},
+     * which at this exact moment is exactly the set Bukkit pre-generated. No hardcoded
+     * radius, so this self-adjusts to whatever the server's own spawn-chunk settings are.</p>
+     *
+     * <p><b>Deliberately only called for a world this method just created</b>, never one
+     * that already existed. {@code paintChunk} derives each column's ground from {@code
+     * getHighestBlockYAt}, which on an <i>already-painted</i> border column returns the wall
+     * block's own Y rather than the ground's - so re-running it over a painted world would
+     * lay a fresh foundation and wall one block higher every time, growing every border
+     * upward on each enable. A plot world created before this fix shipped keeps its one bad
+     * corner until the next {@code /wipeguildplots confirm}, which deletes and recreates the
+     * world and so does come back through here.</p>
+     */
+    private static void paintPreGeneratedSpawnChunks(
+            @NotNull World world, int plotSize, int plotGap, @NotNull Logger logger) {
+        Chunk[] preGenerated = world.getLoadedChunks();
+        for (Chunk chunk : preGenerated) {
+            GuildPlotWorldPopulator.paintChunk(world, world, chunk.getX(), chunk.getZ(), plotSize, plotGap);
+        }
+        logger.info("[guild-plotworld] Painted roads/borders into " + preGenerated.length
+                + " pre-generated spawn chunk(s) the block populator could not reach.");
     }
 
     /**

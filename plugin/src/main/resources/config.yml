@@ -366,6 +366,40 @@ protect:
     - 's:b://butcher:_'
     - 's:b://snow:_'
 
+    # ---- User-curated additions - genuinely dangerous, not yet covered above -----------
+    # Manipulates the same scoreboard Team objects rank.NameTagService uses for nametag
+    # coloring - a separate top-level vanilla command from /scoreboard above, same risk.
+    - 'm:b:/team:_'
+    # Arbitrary attribute modifiers (infinite health, absurd movement speed, etc.) - same
+    # crash/exploit surface already cited for /summon above.
+    - 's:b:/attribute:_'
+    # Arbitrary NBT get/merge/remove on blocks/entities - same crash-exploit surface
+    # already cited for /execute and /summon above.
+    - 's:b:/data:_'
+    # Permanently force-loads chunks - a persistent lag/grief vector with no legitimate
+    # player use case.
+    - 'm:b:/forceload:_'
+    # Arbitrary spoofable text, same rationale as /tellraw above.
+    - 's:b:/bossbar:_'
+    # Opens an unauthenticated raw LAN port on the server, bypassing every other
+    # connection-level protection this project has - never legitimate on a hosted
+    # dedicated server.
+    - 'n:b:/publish:_'
+    # Instantly teleports the sender's camera to any named player/entity - a real
+    # stalking/reconnaissance vector.
+    - 'm:b:/spectate:_'
+    # EssentialsX's own "run a command as another player" - the exact same
+    # PlayerCommandPreprocessEvent-bypass shape RigelMCMod's own /gcmd was patched
+    # against (see investigate.InvestigateModule#gCmdCommand's javadoc) - if Essentials is
+    # installed, its /sudo is a direct, ungated way to reintroduce that same vulnerability
+    # unless blocked.
+    - 'n:b:/sudo:_'
+    # Essentials' own inventory viewer/editor for any online player - ships default: op in
+    # Essentials itself, which on a Free-OP server means everyone would otherwise inherit
+    # it, same "plugin ships its commands op-by-default" gap already defended against for
+    # CoreProtect's commands above.
+    - 'm:b:/invsee:_'
+
   # Anti-grief primitives - the Phase 2 work referenced in ProtectModule's javadoc.
   # Studied from TFM's real AntiNuke/AntiSpam/AntiDrop/MovementValidator/GameRuleHandler/
   # GameModeGuard/MobBlocker/EventBlocker/PotionBlocker/TextFilterService. Every guard is
@@ -400,6 +434,19 @@ protect:
       enabled: true
       max-drops-per-10s: 15
       action: cancel
+    # User-reported real freeze: a player flooding thrown projectiles (ender pearls,
+    # snowballs, eggs, potions) can overload the per-tick nearby-entity scan every one of
+    # them runs and hang the main thread - confirmed by a live Watchdog thread dump. Sliding
+    # 1-second window, same shape as anti-nuke above. 8/s is comfortably above legitimate
+    # rapid-fire play (snowball/egg spam) but well below what a macro/flood needs to matter.
+    # Only ever throttles a player's own throws - dispensers/mobs launching their own
+    # projectiles are untouched.
+    projectile-spam:
+      enabled: true
+      max-per-second: 8
+      # "kick" (default) or anything else (alert-only, staff notified, no action taken) -
+      # same convention as anti-nuke.action above.
+      action: kick
     # TFM ref: EventBlocker's ALLOW_EXPLOSIONS/ALLOW_FIRE_SPREAD, studied directly - one
     # deliberate deviation: TFM's own "allowed" path still always zeroes the explosion
     # yield (so terrain is never actually damaged by TNT either way in TFM's real
@@ -500,6 +547,13 @@ protect:
       # recursive-open crash vector. 2 allows one level of "shulker inside a chest" without
       # flagging normal storage play.
       max-container-depth: 2
+      # The breadth counterpart to max-container-depth above - a running total of every
+      # non-air item found anywhere in a container/bundle's nested tree, not per-branch, so
+      # many sibling containers at an allowed depth (each holding more items) still get
+      # flagged even though none individually exceeds the depth cap. User-reported: a real
+      # server freeze traced to CoreProtect forcing a synchronous NBT decode of a chest on
+      # right-click - see protect.crash.ItemGuard's javadoc.
+      max-nested-item-count: 200
       max-potion-effects: 24
       max-firework-explosions: 64
       max-banner-patterns: 256

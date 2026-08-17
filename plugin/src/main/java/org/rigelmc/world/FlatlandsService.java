@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.logging.Level;
 import net.kyori.adventure.text.Component;
@@ -194,6 +195,18 @@ public final class FlatlandsService {
         }
         createWorld(name);
         plugin.getLogger().info("Created flatlands world '" + name + "'.");
+    }
+
+    /**
+     * @return the flatlands {@link World} if it's currently loaded - empty if not (either
+     *     {@link #initializeWorld} hasn't finished its async creation yet, or a wipe is
+     *     mid-flight and has it temporarily unloaded). Same pattern as {@link
+     *     AdminWorldService#world()}; used by {@link SpawnJoinListener} to fall back
+     *     first-join players here when no RMCM spawn is configured.
+     */
+    @NotNull
+    public Optional<World> world() {
+        return Optional.ofNullable(Bukkit.getWorld(plugin.rigelConfig().flatlandsWorldName()));
     }
 
     /**

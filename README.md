@@ -121,12 +121,14 @@ after your first boot:
 | `/tban <player> <duration> [reason] [-r]` | Custom-duration ban, opt-in rollback |
 | `/permban <name\|ip> [reason]` | Permanent ban, cascades to every name/IP the target has ever shared |
 | `/unban <name\|ip> [-c]` (alias `/punish unban`) | Lifts a ban issued by `/ban`, `/tban`, or `/permban`; `-c` lifts the whole permban cascade case. Deliberately shadows Essentials' own `/unban` |
+| `/banhistory <player>` | **Moderator+.** A player's full ban record - active, expired, and revoked alike, most recent first. The opposite scope of the web panel's Bans page, which only shows what's currently in effect |
 | `/punish mute <player> [reason]` / `/punish unmute <player>` | Indefinite, staff-facing chat mute - explicitly unmuted later |
 | `/mute <player> [reason]` / `/unmute <player>` | TFM's `/stfu`: quick, always-public, fixed 5-minute **toggle**-mute (running it again unmutes early). Deliberately, unconditionally shadows Essentials' own `/mute` - not gated behind `aliases.enable-shadowing` |
 | `/o <message>` | Staff-only broadcast - in-game, plus the Discord admin channel if the bridge is connected |
 | `/discord link` / `/discord unlink` | Link/unlink your Discord account (finish by running `/link code:CODE` as a Discord slash command, in a DM to the bot) |
 | `/wipeflatlands` | Immediately wipe and regenerate the flatlands sandbox world (in-place by default - Senior Admin+, in-game or console; console/RCON-only if `world.flatlands.wipe-requires-restart: true`). Also removes any EssentialsX `/warp` left pointing into it |
 | `/wipeworld confirm` | **Console/RCON only, two-step confirm.** Wipes and regenerates the primary Overworld itself (fresh random seed) - every player's build in it is lost. Nether/End are untouched, and there's no auto-wipe schedule for this at all |
+| `/world <nether\|end>` | Fast-travel to the Nether or the End without a portal - open to everyone. Lands you at a nearby genuinely safe spot (a bounded scan for solid, non-lava ground), not just the dimension's raw default spawn point |
 | `/announce <message>` | One-off server-wide broadcast, MiniMessage-formatted (colors, gradients, etc.) - any `https://`/`http://` URL in the message (configured rotation lines too) is automatically made clickable |
 | `/gcmd <player> <command...>` | **Senior Admin.** Run a command as another online player - re-checks the outgoing command against `protect.command-access` (using *your* rank) before dispatching it, closing the bypass a raw `dispatchCommand` would otherwise open |
 | `/rvanish` | Vanish, hidden from regular players *and* non-staff auto-op'd players (Moderator+) |
@@ -218,7 +220,10 @@ the bare `/tp`) is always blocked outright, matching TFM. The flatlands world al
 auto-wipes on a configurable schedule (`world.flatlands.autowipe` in `config.yml`, with a
 broadcast warning some minutes before it fires), a rotating broadcaster can cycle through
 a configured message list (`announce.broadcast.messages`), and the server-list MOTD can
-rotate through configured entries too (`motd.entries`) - all three MiniMessage-colored.
+rotate through configured entries too (`motd.entries`) - all three MiniMessage-colored. A
+genuinely brand-new player is never left standing at the primary world's own default
+spawn: if a Senior Admin has run `/setspawn`, they land there like normal; if not, they
+default into the flatlands sandbox instead of the main world.
 
 ## Building
 

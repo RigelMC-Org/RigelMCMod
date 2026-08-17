@@ -135,6 +135,29 @@ public final class BanDao {
         }
     }
 
+    /**
+     * @return every ban entry directly targeting this UUID by name - active, expired, and
+     *     revoked alike - most recent first, capped at {@code limit}. For {@code
+     *     /banhistory} (Moderator+): unlike {@link #findActiveByUuid}, this is a full
+     *     record, not "what's currently in effect."
+     */
+    @NotNull
+    public List<Ban> findHistoryByUuid(UUID uuid, int limit) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT * FROM rigel_bans WHERE target_uuid = ? ORDER BY created_at DESC LIMIT ?")) {
+            statement.setString(1, uuid.toString());
+            statement.setInt(2, limit);
+            try (ResultSet rs = statement.executeQuery()) {
+                List<Ban> results = new ArrayList<>();
+                while (rs.next()) {
+                    results.add(mapRow(rs));
+                }
+                return results;
+            }
+        }
+    }
+
     @NotNull
     public List<Ban> findByCaseId(String caseId) throws SQLException {
         try (Connection connection = dataSource.getConnection();

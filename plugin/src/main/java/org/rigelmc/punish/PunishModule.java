@@ -7,6 +7,9 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -146,6 +149,7 @@ public final class PunishModule implements PluginModule {
         // command originally created it (/ban, /tban, or /permban all write to the same
         // rigel_bans table), so this one command covers all three.
         registrar.register(unbanCommand(), "Lift a ban issued by /ban, /tban, or /permban");
+        registrar.register(banHistoryCommand(), "Look up a player's full ban history - Moderator+");
 
         // /mute and /unmute are unconditional, not gated behind collisionPolicy -
         // deliberately shadow Essentials' own /mute, exactly like /ban and /unban already
@@ -1081,6 +1085,106 @@ public final class PunishModule implements PluginModule {
             }
         });
         return 1;
+    }
+
+    // ---- /banhistory ---------------------------------------------------------------------
+
+    /** Most ban rows a single {@code /banhistory} lookup will ever show, oldest cut off past this. */
+    private static final int BAN_HISTORY_LIMIT = 25;
+
+    private static final DateTimeFormatter BAN_HISTORY_DATE_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
+
+    /**
+     * User-requested: a player's <b>full</b> ban record (active, expired, and revoked
+     * alike) for Moderator+ - deliberately the opposite scope of the web panel's "Recent
+     * bans" list, which now hides anything not currently in effect (see {@link
+     * org.rigelmc.webpanel.WebPanelSnapshotService#applyRefresh}, same user request) - that
+     * page is a public-facing "what's happening right now" summary, this command is a
+     * staff lookup tool that needs the whole trail to be useful at all.
+     */
+    private LiteralCommandNode<CommandSourceStack> banHistoryCommand() {
+        return Commands.literal("banhistory")
+                .requires(source -> hasRank(source, "moderator"))
+                .executes(ctx -> CommandUsage.show(ctx.getSource().getSender(), "/banhistory <player>"))
+                .then(Commands.argument("player", StringArgumentType.word()).suggests(PlayerSuggestions.ONLINE_PLAYERS)
+                        .executes(this::executeBanHistory))
+                .build();
+    }
+
+    private int executeBanHistory(CommandContext<CommandSourceStack> ctx) {
+        CommandSender sender = ctx.getSource().getSender();
+        String targetName = StringArgumentType.getString(ctx, "player");
+        Player onlineTarget = Bukkit.getPlayerExact(targetName);
+
+        dbExecutor.submit(() -> {
+            try {
+                Optional<UUID> uuidOpt = resolveUuid(targetName, onlineTarget);
+                if (uuidOpt.isEmpty()) {
+                    sync(() -> sendPlayerNotFound(sender, targetName));
+                    return;
+                }
+                List<Ban> history = banService.history(uuidOpt.get(), BAN_HISTORY_LIMIT);
+                long now = System.currentTimeMillis();
+                sync(() -> sendBanHistory(sender, targetName, history, now));
+            } catch (SQLException e) {
+                logAndNotifyFailure(sender, "/banhistory", e);
+            }
+        });
+        return 1;
+    }
+
+    private void sendBanHistory(CommandSender sender, String targetName, List<Ban> history, long now) {
+        if (history.isEmpty()) {
+            sender.sendMessage(Component.text(targetName + " has no ban history.", NamedTextColor.GRAY));
+            return;
+        }
+        sender.sendMessage(Component.text(
+                targetName + "'s ban history (" + history.size()
+                        + (history.size() == BAN_HISTORY_LIMIT ? "+" : "") + " entries, most recent first):",
+                NamedTextColor.AQUA));
+        for (Ban ban : history) {
+            sender.sendMessage(banHistoryLine(ban, now));
+        }
+    }
+
+    @NotNull
+    private Component banHistoryLine(Ban ban, long now) {
+        String status;
+        NamedTextColor statusColor;
+        if (!ban.active()) {
+            status = "REVOKED";
+            statusColor = NamedTextColor.GRAY;
+        } else if (ban.isExpired(now)) {
+            status = "EXPIRED";
+            statusColor = NamedTextColor.YELLOW;
+        } else {
+            status = "ACTIVE";
+            statusColor = NamedTextColor.RED;
+        }
+        String expiry = ban.isPermanent() ? "permanent" : BAN_HISTORY_DATE_FORMAT.format(Instant.ofEpochMilli(ban.expiresAt()));
+        String created = BAN_HISTORY_DATE_FORMAT.format(Instant.ofEpochMilli(ban.createdAt()));
+        String bannedBy = actorName(ban.bannedByUuid());
+
+        return Component.text("  #" + ban.id() + " ", NamedTextColor.GRAY)
+                .append(Component.text("[" + ban.type().name() + "] ", NamedTextColor.GOLD))
+                .append(Component.text("[" + status + "] ", statusColor))
+                .append(Component.text(ban.reason(), NamedTextColor.WHITE))
+                .append(Component.text(
+                        " (by " + bannedBy + ", " + created + " -> " + expiry + ")", NamedTextColor.DARK_GRAY));
+    }
+
+    /** Resolves an actor UUID (banned-by/revoked-by) to a display name - "console" for null, the raw UUID if never seen. */
+    @NotNull
+    private String actorName(@Nullable UUID uuid) {
+        if (uuid == null) {
+            return "console";
+        }
+        try {
+            return playerDao.findByUuid(uuid).map(PlayerRecord::lastKnownName).orElse(uuid.toString());
+        } catch (SQLException e) {
+            return uuid.toString();
+        }
     }
 
     // ---- shared helpers ----------------------------------------------------------------

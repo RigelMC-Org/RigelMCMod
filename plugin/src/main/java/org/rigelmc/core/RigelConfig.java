@@ -317,6 +317,27 @@ public final class RigelConfig {
     }
 
     /**
+     * @return {@code protect.anti-grief.projectile-spam.enabled} - user-reported: nothing
+     *     previously rate-limited thrown projectiles (ender pearls, snowballs, eggs,
+     *     potions) per player, letting enough simultaneously in-flight projectiles overload
+     *     the per-tick nearby-entity scan every one of them does and freeze the main thread -
+     *     see {@code protect.antigrief.ProjectileSpamGuard}'s javadoc.
+     */
+    public boolean projectileSpamEnabled() {
+        return source.getBoolean("protect.anti-grief.projectile-spam.enabled", true);
+    }
+
+    public int projectileSpamMaxPerSecond() {
+        return source.getInt("protect.anti-grief.projectile-spam.max-per-second", 8);
+    }
+
+    /** @return {@code protect.anti-grief.projectile-spam.action} - same {@code "kick"}/other-is-alert-only convention as {@link #antiNukeAction}. */
+    @NotNull
+    public String projectileSpamAction() {
+        return source.getString("protect.anti-grief.projectile-spam.action", "kick");
+    }
+
+    /**
      * @return {@code protect.anti-grief.tnt-damage.enabled} - whether TNT/other explosions
      *     are allowed to damage blocks. TFM ref: {@code ALLOW_EXPLOSIONS} - see the config.yml
      *     comment on this key for the one deliberate behavior deviation from TFM's real
@@ -456,6 +477,18 @@ public final class RigelConfig {
 
     public int crashItemMaxContainerDepth() {
         return source.getInt("protect.crash.items.max-container-depth", 2);
+    }
+
+    /**
+     * @return {@code protect.crash.items.max-nested-item-count} - the breadth counterpart
+     *     to {@link #crashItemMaxContainerDepth} - a running total of every non-air item
+     *     visited anywhere in a container/bundle's nested tree (not per-branch), so many
+     *     sibling containers at an allowed depth still trip this even though none
+     *     individually exceeds the depth cap. User-reported, see {@code
+     *     protect.crash.ItemGuard}'s javadoc.
+     */
+    public int crashItemMaxNestedItemCount() {
+        return source.getInt("protect.crash.items.max-nested-item-count", 200);
     }
 
     public int crashItemMaxPotionEffects() {

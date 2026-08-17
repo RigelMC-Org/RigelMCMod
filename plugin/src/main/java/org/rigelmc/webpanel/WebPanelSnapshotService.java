@@ -127,6 +127,7 @@ public final class WebPanelSnapshotService {
     private void applyRefresh(
             List<PlayerRecord> ranked, List<Ban> recentBans, List<MuteDao.MuteRecord> mutes,
             Map<UUID, String> titleLabels) {
+        long now = System.currentTimeMillis();
         List<WebPanelSnapshot.PlayerEntry> online = new ArrayList<>();
         for (Player player : Bukkit.getOnlinePlayers()) {
             UUID uuid = player.getUniqueId();
@@ -143,6 +144,16 @@ public final class WebPanelSnapshotService {
 
         List<WebPanelSnapshot.BanEntry> bans = new ArrayList<>();
         for (Ban ban : recentBans) {
+            // User-requested: don't show expired bans here. Also the real fix for a latent
+            // bug this surfaced - ban.active() is only ever flipped false by a manual
+            // revoke/unban (BanDao#revoke*), never by a temp ban's own expires_at simply
+            // passing, so a naturally-expired temp ban that was never manually unbanned
+            // used to keep showing up marked "Active" forever. isCurrentlyInEffect checks
+            // both (not revoked AND not time-expired) - the actually-correct definition,
+            // matching how the mute list right below already filters expired entries.
+            if (!ban.isCurrentlyInEffect(now)) {
+                continue;
+            }
             String target = ban.targetLastName() != null
                     ? ban.targetLastName()
                     : (ban.targetIpHash() != null ? "(ip)" : "(unknown)");
@@ -151,7 +162,6 @@ public final class WebPanelSnapshotService {
         }
 
         List<WebPanelSnapshot.MuteEntry> muteEntries = new ArrayList<>();
-        long now = System.currentTimeMillis();
         for (MuteDao.MuteRecord mute : mutes) {
             if (mute.isExpired(now)) {
                 continue;

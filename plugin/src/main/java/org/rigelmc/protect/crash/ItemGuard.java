@@ -12,7 +12,9 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
+import org.bukkit.event.player.PlayerEditBookEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
@@ -52,6 +54,23 @@ import org.rigelmc.rank.PermissionGate;
  * doesn't fire {@link InventoryClickEvent}/{@link InventoryDragEvent} at all), and
  * independently rate-limits the swap itself via {@link PerPlayerRateLimiter}, so even a
  * "clean" item can't be swapped fast enough to matter.</p>
+ *
+ * <p><b>User-reported real freeze, two gaps closed</b>: a chest containing an item with
+ * expensive-to-decode NBT froze the main thread when CoreProtect's own interact-logging
+ * forced a synchronous decode of it on right-click (this happens at the NMS block-entity
+ * load layer, before any Bukkit event this plugin could hook even fires - the only real fix
+ * is stopping the cursed item from ever being placed, not detecting it after the fact).
+ * Two paths previously let a cursed item reach a chest without ever running {@link
+ * #isCursed}: editing a book directly (fires {@link PlayerEditBookEvent}, not {@link
+ * InventoryClickEvent}/{@link InventoryDragEvent} - matches a log showing repeated vanilla
+ * "Book edited too quickly!" kicks, vanilla's own *rate* limit on this path, not a *content*
+ * one) and a hopper/dropper auto-transferring an item between containers (fires {@link
+ * InventoryMoveItemEvent}, which nothing here checked either) - both are now hooked with
+ * the exact same {@link #isCursed} check every other path already uses. {@link #isCursed}
+ * itself also gained a total-nested-item-*count* cap alongside its existing *depth* cap
+ * (see {@code crashItemMaxNestedItemCount}) - many sibling containers at an allowed depth
+ * could otherwise still add up to an expensive decode without ever tripping the depth
+ * check.</p>
  *
  * <p>Reads {@code plugin.rigelConfig()} fresh on every event rather than caching a
  * reference - see {@code protect.antigrief.AntiNukeGuard}'s javadoc for why.</p>
@@ -96,6 +115,40 @@ public final class ItemGuard implements Listener {
         }
         if (isCursed(event.getResult())) {
             event.setResult(null);
+        }
+    }
+
+    /**
+     * User-reported gap: editing a book fires this event, not {@link InventoryClickEvent}/
+     * {@link InventoryDragEvent} - the only other paths this guard's book-size check ran
+     * from - so a player could build an oversized/malformed book entirely through the book
+     * GUI without ever tripping it. See this class's own javadoc for the log pattern this
+     * closes.
+     */
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onEditBook(@NotNull PlayerEditBookEvent event) {
+        Player player = event.getPlayer();
+        if (isExempt(player)) {
+            return;
+        }
+        if (bookExceedsLimits(event.getNewBookMeta(), plugin.rigelConfig())) {
+            event.setCancelled(true);
+            warn(player);
+        }
+    }
+
+    /**
+     * User-reported gap: a hopper/dropper auto-transferring an item between containers
+     * never fires {@link InventoryClickEvent}/{@link InventoryDragEvent} either - a cursed
+     * item could reach a chest this way without a player ever directly clicking it in.
+     * No player/exemption check here - there's no player performing the transfer, and this
+     * only ever fires for an item that's already cursed regardless of who built the hopper
+     * chain.
+     */
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onItemMove(@NotNull InventoryMoveItemEvent event) {
+        if (isCursed(event.getItem())) {
+            event.setCancelled(true);
         }
     }
 
@@ -165,10 +218,17 @@ public final class ItemGuard implements Listener {
 
     /** @return {@code true} if this item (or anything nested inside it) exceeds a configured safety limit. */
     public boolean isCursed(@Nullable ItemStack stack) {
-        return isCursed(stack, 0);
+        return isCursed(stack, 0, new int[1]);
     }
 
-    private boolean isCursed(@Nullable ItemStack stack, int depth) {
+    /**
+     * @param itemCount a single-element running total shared across this whole recursive
+     *     walk (not per-branch) - every non-air item visited anywhere in the tree increments
+     *     it once, so many sibling containers at an allowed depth (breadth, not depth) still
+     *     trip {@code crashItemMaxNestedItemCount} even though none of them individually
+     *     exceeds {@code crashItemMaxContainerDepth} - see this class's own javadoc.
+     */
+    private boolean isCursed(@Nullable ItemStack stack, int depth, int[] itemCount) {
         if (stack == null || stack.getType().isAir() || !stack.hasItemMeta()) {
             return false;
         }
@@ -191,16 +251,8 @@ public final class ItemGuard implements Listener {
                 }
             }
         }
-        if (meta instanceof BookMeta bookMeta) {
-            List<Component> pages = bookMeta.pages();
-            if (pages.size() > config.crashItemMaxBookPages()) {
-                return true;
-            }
-            for (Component page : pages) {
-                if (plainTextLength(page) > config.crashItemMaxBookPageLength()) {
-                    return true;
-                }
-            }
+        if (meta instanceof BookMeta bookMeta && bookExceedsLimits(bookMeta, config)) {
+            return true;
         }
         if (meta instanceof PotionMeta potionMeta
                 && potionMeta.getCustomEffects().size() > config.crashItemMaxPotionEffects()) {
@@ -223,7 +275,7 @@ public final class ItemGuard implements Listener {
                 return !bundleMeta.getItems().isEmpty();
             }
             for (ItemStack contained : bundleMeta.getItems()) {
-                if (isCursed(contained, depth + 1)) {
+                if (exceedsNestedItemCount(contained, itemCount, config) || isCursed(contained, depth + 1, itemCount)) {
                     return true;
                 }
             }
@@ -244,12 +296,40 @@ public final class ItemGuard implements Listener {
                 return false;
             }
             for (ItemStack contained : contents) {
-                if (isCursed(contained, depth + 1)) {
+                if (exceedsNestedItemCount(contained, itemCount, config) || isCursed(contained, depth + 1, itemCount)) {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /** Extracted out of {@link #isCursed} so {@link #onEditBook} can reuse it directly. */
+    private static boolean bookExceedsLimits(@NotNull BookMeta meta, @NotNull RigelConfig config) {
+        List<Component> pages = meta.pages();
+        if (pages.size() > config.crashItemMaxBookPages()) {
+            return true;
+        }
+        for (Component page : pages) {
+            if (plainTextLength(page) > config.crashItemMaxBookPageLength()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Increments the shared running total for one non-air nested item and reports whether
+     * it's now over {@code crashItemMaxNestedItemCount} - the breadth counterpart to {@link
+     * RigelConfig#crashItemMaxContainerDepth}'s depth cap, see this class's own javadoc.
+     */
+    private static boolean exceedsNestedItemCount(
+            @Nullable ItemStack contained, int[] itemCount, @NotNull RigelConfig config) {
+        if (contained == null || contained.getType().isAir()) {
+            return false;
+        }
+        itemCount[0]++;
+        return itemCount[0] > config.crashItemMaxNestedItemCount();
     }
 
     private static int plainTextLength(@Nullable Component component) {

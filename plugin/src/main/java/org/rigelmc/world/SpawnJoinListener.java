@@ -1,5 +1,8 @@
 package org.rigelmc.world;
 
+import java.util.Optional;
+import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -16,15 +19,22 @@ import org.rigelmc.RigelMCMod;
  * core.PlayerLoginListener}: that listener's job is identity/rank/display-state
  * resolution, this one's is purely "where does the player end up," and the two concerns
  * shouldn't be coupled.
+ *
+ * <p>User-requested: a genuinely first-time joiner with no RMCM spawn configured yet
+ * ({@code /setspawn} never run) must never be silently left at vanilla's own primary-world
+ * spawn - see {@link #onJoin}'s flatlands fallback.</p>
  */
 public final class SpawnJoinListener implements Listener {
 
     private final RigelMCMod plugin;
     private final SpawnService spawnService;
+    private final FlatlandsService flatlandsService;
 
-    public SpawnJoinListener(@NotNull RigelMCMod plugin, @NotNull SpawnService spawnService) {
+    public SpawnJoinListener(
+            @NotNull RigelMCMod plugin, @NotNull SpawnService spawnService, @NotNull FlatlandsService flatlandsService) {
         this.plugin = plugin;
         this.spawnService = spawnService;
+        this.flatlandsService = flatlandsService;
     }
 
     /**
@@ -47,9 +57,23 @@ public final class SpawnJoinListener implements Listener {
 
         Player player = event.getPlayer();
         plugin.getServer().getScheduler().runTask(plugin, () -> {
-            if (player.isOnline()) {
-                spawnService.spawnLocation().ifPresent(player::teleport);
+            if (!player.isOnline()) {
+                return;
             }
+            Optional<Location> destination = spawnService.spawnLocation();
+            if (destination.isEmpty() && firstJoin) {
+                // User-requested: a brand-new player with no RMCM spawn configured yet must
+                // never be left at vanilla's own primary-world spawn - default them into the
+                // flatlands sandbox instead. Scoped to a genuine first join only (not every
+                // "always"-policy join with no spawn set), so a returning player already
+                // playing in the main world is never silently redirected out of it. If
+                // flatlands itself isn't loaded yet (initializeWorld's async creation hasn't
+                // finished - see FlatlandsService#initializeWorld's javadoc), this stays
+                // empty too and the player is left exactly where vanilla put them, same
+                // graceful no-op as before this fallback existed.
+                destination = flatlandsService.world().map(World::getSpawnLocation);
+            }
+            destination.ifPresent(player::teleport);
         });
     }
 
