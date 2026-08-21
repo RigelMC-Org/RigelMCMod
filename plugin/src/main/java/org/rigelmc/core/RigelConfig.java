@@ -338,6 +338,43 @@ public final class RigelConfig {
     }
 
     /**
+     * @return {@code protect.anti-grief.command-blocks.enabled} - user-requested after a live
+     *     incident (a repeating command block running {@code /give all netherite_axe} hundreds
+     *     of times a second). Command blocks bypass {@code protect.command-access} entirely -
+     *     that is enforced on {@code PlayerCommandPreprocessEvent}, and a command block is not
+     *     a player - so this is the only thing standing between them and a Free-OP server where
+     *     everyone is op. See {@code protect.antigrief.CommandBlockGuard}.
+     */
+    public boolean commandBlockGuardEnabled() {
+        return source.getBoolean("protect.anti-grief.command-blocks.enabled", true);
+    }
+
+    /**
+     * @return {@code protect.anti-grief.command-blocks.remove-on-execute} - whether a command
+     *     block that tries to run is physically deleted, not just cancelled. On by default: a
+     *     repeating command block fires every tick, so cancelling alone leaves the server
+     *     rejecting it forever, whereas deleting it stops the loop permanently and cleans up
+     *     command blocks already placed before this guard existed.
+     */
+    public boolean commandBlockRemoveOnExecute() {
+        return source.getBoolean("protect.anti-grief.command-blocks.remove-on-execute", true);
+    }
+
+    /** @return {@code protect.anti-grief.command-blocks.block-structure-blocks} - also refuse structure/jigsaw block placement. */
+    public boolean commandBlockBlockStructureBlocks() {
+        return source.getBoolean("protect.anti-grief.command-blocks.block-structure-blocks", true);
+    }
+
+    /**
+     * @return {@code protect.anti-grief.command-blocks.alert-interval-seconds} - minimum gap
+     *     between staff alerts for the same command block. A repeating one fires every tick, so
+     *     an unthrottled alert would itself be the lag bomb this guard exists to stop.
+     */
+    public int commandBlockAlertIntervalSeconds() {
+        return source.getInt("protect.anti-grief.command-blocks.alert-interval-seconds", 60);
+    }
+
+    /**
      * @return {@code protect.anti-grief.tnt-damage.enabled} - whether TNT/other explosions
      *     are allowed to damage blocks. TFM ref: {@code ALLOW_EXPLOSIONS} - see the config.yml
      *     comment on this key for the one deliberate behavior deviation from TFM's real
@@ -890,6 +927,24 @@ public final class RigelConfig {
         return source.getBoolean("world.spawn.send-on-respawn", false);
     }
 
+    /**
+     * @return {@code world.main-world-lockdown.enabled} - user-requested: keep non-staff
+     *     players out of the primary Overworld entirely, sending them to the flatlands
+     *     sandbox on join, on respawn, and any time they end up there. Only the Overworld
+     *     is affected - the Nether/End (reachable via {@code /world}), flatlands, guild
+     *     plot world, and admin world are all untouched. See {@code
+     *     world.MainWorldLockdownGuard}.
+     */
+    public boolean mainWorldLockdownEnabled() {
+        return source.getBoolean("world.main-world-lockdown.enabled", true);
+    }
+
+    /** @return {@code world.main-world-lockdown.bypass-rank} - minimum rank still allowed in the main world. */
+    @NotNull
+    public String mainWorldLockdownBypassRank() {
+        return source.getString("world.main-world-lockdown.bypass-rank", "moderator");
+    }
+
     public boolean announceEnabled() {
         return source.getBoolean("announce.broadcast.enabled", true);
     }
@@ -1206,6 +1261,53 @@ public final class RigelConfig {
      */
     public int guildPlotGap() {
         return source.getInt("guild.plotworld.plot-gap", 7);
+    }
+
+    /**
+     * @return {@code guild.plotworld.spawn-repair-radius-chunks} - how far out from the plot
+     *     world's origin {@code guild.plot.GuildPlotWorldService#repairPreGeneratedChunks}
+     *     looks for already-generated chunks that Bukkit produced before the block populator
+     *     could attach (those keep bare, road-less terrain forever otherwise - a real,
+     *     user-reported bug). Only chunks that already exist are touched; nothing is
+     *     force-generated. 0 disables the repair pass entirely.
+     */
+    public int guildPlotSpawnRepairRadiusChunks() {
+        return source.getInt("guild.plotworld.spawn-repair-radius-chunks", 12);
+    }
+
+    /**
+     * The plot world's road/border block palette ({@code guild.plotworld.materials.*}) -
+     * user-requested after seeing the generated result in-game; these used to be hardcoded.
+     * Resolved (with per-slot fallbacks for an unrecognised name) by {@code
+     * guild.plot.PlotWorldMaterials#fromConfig}.
+     */
+    @NotNull
+    public String guildPlotRoadMaterial() {
+        return source.getString("guild.plotworld.materials.road", "STONE");
+    }
+
+    /** @return {@code guild.plotworld.materials.border-foundation} - fills every block from bedrock up through ground level under a border/crossing. */
+    @NotNull
+    public String guildPlotBorderFoundationMaterial() {
+        return source.getString("guild.plotworld.materials.border-foundation", "STONE_BRICKS");
+    }
+
+    /** @return {@code guild.plotworld.materials.border-wall} - caps a straight, one-column-wide border. A wall/fence block suits this slot. */
+    @NotNull
+    public String guildPlotBorderWallMaterial() {
+        return source.getString("guild.plotworld.materials.border-wall", "COBBLESTONE_WALL");
+    }
+
+    /**
+     * @return {@code guild.plotworld.materials.intersection} - caps the {@code plot-gap x
+     *     plot-gap} square where four plot corners meet. Deliberately its own slot rather
+     *     than reusing {@link #guildPlotBorderWallMaterial()}: a wall block is a thin fence
+     *     post, so an entire square of them renders as a bumpy lattice rather than a clean
+     *     crossing. Use a full solid block here.
+     */
+    @NotNull
+    public String guildPlotIntersectionMaterial() {
+        return source.getString("guild.plotworld.materials.intersection", "STONE_BRICKS");
     }
 
     /** @return {@code guild.plotworld.grid-columns} - how many plots per row before the grid wraps to the next row. */

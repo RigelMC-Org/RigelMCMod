@@ -27,8 +27,11 @@ class PlotWorldTerrainTest {
     }
 
     @Test
-    void theDiagonalCornerOfTheBorderRingIsBorder() {
-        assertEquals(PlotWorldTerrain.CellType.BORDER, PlotWorldTerrain.classify(16, 16, 16, 4));
+    void theDiagonalCornerOfTheBorderRingIsAnIntersection() {
+        // Both axes are in the gap here, so this is inside the intersection square rather
+        // than on a straight edge - INTERSECTION, not BORDER, so it gets capped with a solid
+        // block instead of a thin wall post. See PlotWorldTerrain.CellType.INTERSECTION.
+        assertEquals(PlotWorldTerrain.CellType.INTERSECTION, PlotWorldTerrain.classify(16, 16, 16, 4));
     }
 
     @Test
@@ -43,31 +46,31 @@ class PlotWorldTerrainTest {
     }
 
     @Test
-    void theIntersectionSquareIsFullyWalledNotOpenRoad() {
+    void theIntersectionSquareIsFullySealedNotOpenRoad() {
         // User-reported bug, fixed: a 4-plot intersection (both axes deep in the gap
         // simultaneously, not just on either plot's own straight-edge border ring) used to
         // stay open road - only the single column closest to each of the (up to) 4
-        // surrounding plots was BORDER, leaving 4 disconnected wall stubs around an open
-        // diamond of pavement. The whole intersection square is BORDER now - every corner
-        // reads as one clean, fully-enclosed wall.
-        assertEquals(PlotWorldTerrain.CellType.BORDER, PlotWorldTerrain.classify(17, 17, 16, 4));
+        // surrounding plots was walled, leaving 4 disconnected wall stubs around an open
+        // diamond of pavement. The whole square is INTERSECTION now - every corner reads as
+        // one clean, fully-enclosed solid crossing.
+        assertEquals(PlotWorldTerrain.CellType.INTERSECTION, PlotWorldTerrain.classify(17, 17, 16, 4));
     }
 
     @Test
-    void everyColumnOfTheIntersectionSquareIsBorderNotJustTheFourCorners() {
+    void everyColumnOfTheIntersectionSquareIsSealedNotJustTheFourCorners() {
         // Regression guard for the exact reported bug: sweep the entire plotGap x plotGap
         // intersection square (plotSize=16, plotGap=4 -> local gap columns 16..19 on both
-        // axes) and assert every one of the 16 cells is BORDER, not just the 4 corner points
+        // axes) and assert every one of the 16 cells is sealed, not just the 4 corner points
         // closest to a plot. This is what actually would have caught the original bug (only
-        // 4 of these 16 cells were BORDER, the other 12 were open ROAD).
+        // 4 of these 16 cells were walled, the other 12 were open ROAD).
         for (int dx = 0; dx < 4; dx++) {
             for (int dz = 0; dz < 4; dz++) {
                 int worldX = 16 + dx;
                 int worldZ = 16 + dz;
                 assertEquals(
-                        PlotWorldTerrain.CellType.BORDER,
+                        PlotWorldTerrain.CellType.INTERSECTION,
                         PlotWorldTerrain.classify(worldX, worldZ, 16, 4),
-                        "expected BORDER at intersection-square column (" + worldX + ", " + worldZ + ")");
+                        "expected INTERSECTION at square column (" + worldX + ", " + worldZ + ")");
             }
         }
     }
@@ -83,9 +86,9 @@ class PlotWorldTerrainTest {
         // The boundary lockdown's own bounds extend into negative X/Z (see
         // GuildPlotWorldService#computeBoundaryBounds) - classify must still tile correctly
         // there, not just for positive coordinates. worldX=-1/-16 sit one block outside the
-        // origin plot's low edge (both axes at the border touching that plot's "before"
-        // side) - BORDER, not the buggy old behavior of ROAD or the naive PLOT guess.
-        assertEquals(PlotWorldTerrain.CellType.BORDER, PlotWorldTerrain.classify(-1, -1, 16, 4));
+        // origin plot's low edge - both axes land in the gap at once, so this is inside the
+        // intersection square, not the buggy old behavior of ROAD or the naive PLOT guess.
+        assertEquals(PlotWorldTerrain.CellType.INTERSECTION, PlotWorldTerrain.classify(-1, -1, 16, 4));
         // worldX=-15 lands inside the *previous* cell's own plot (cell index -1, local
         // coordinate 5) - genuinely PLOT, one full cell further out.
         assertEquals(PlotWorldTerrain.CellType.PLOT, PlotWorldTerrain.classify(-15, -15, 16, 4));

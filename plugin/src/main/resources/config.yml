@@ -525,6 +525,29 @@ protect:
       patterns: []
       # Duration of the automatic /tban a chat/command match triggers.
       ban-duration-hours: 24
+    # Command blocks are blocked outright (user-requested, after a repeating command block
+    # running "/give all netherite_axe" fired hundreds of times a second on a live server).
+    # This is the ONLY thing standing between command blocks and the server: they bypass
+    # protect.command-access entirely, because that is enforced on
+    # PlayerCommandPreprocessEvent and a command block is not a player - so even an
+    # unconditional "n:b:" rule never sees one. Matters doubly here, since every player is
+    # auto-op'd and could otherwise place and program them freely. Console and RCON are
+    # never affected.
+    command-blocks:
+      enabled: true
+      # Physically delete a command block that tries to run, rather than only cancelling it.
+      # On by default: a repeating command block fires every tick, so cancelling alone leaves
+      # the server rejecting it forever - deleting stops the loop for good, and cleans up
+      # command blocks already placed before this guard existed (they delete themselves the
+      # moment they next fire). Set false to cancel silently and leave the block standing.
+      remove-on-execute: true
+      # Also refuse placement of structure and jigsaw blocks. They can't run commands, but
+      # they're the same class of op-only admin block and every player here is op.
+      block-structure-blocks: true
+      # Minimum seconds between staff alerts about the same command block. A repeating one
+      # fires every tick, so an unthrottled alert would itself be the lag bomb this guard
+      # exists to stop.
+      alert-interval-seconds: 60
 
   # Event-level crash-exploit protections (TFM parity - "E1" tier of the wider suite, see
   # docs for the packet-level "E2" tier). Pure Bukkit/Paper public API, no new dependency.
@@ -633,6 +656,14 @@ protect:
       - black_concrete_powder
       - dragon_egg
       - scaffolding
+      # Defense-in-depth only - protect.anti-grief.command-blocks above is the real guard.
+      # This list is WorldEdit/FAWE-only and exempts Moderator+, so it just stops a non-staff
+      # "//set command_block" or a schematic paste from placing them in the first place.
+      - command_block
+      - chain_command_block
+      - repeating_command_block
+      - structure_block
+      - jigsaw
     # Applies to WorldEdit's radius/size-taking commands (//sphere, //cyl, //pyramid,
     # brush tools, etc.). These two values (this and limits.max-volume below) can also be
     # raised/lowered at runtime without editing this file, via the console/in-game
@@ -890,6 +921,32 @@ guild:
     # not this number) - a real, user-reported bug (roads floating in mid-air) in an
     # earlier version that trusted this value for terrain placement too.
     ground-y: 64
+    # Bukkit generates a world's spawn region during world *creation*, before any block
+    # populator can be attached to the finished world - and it never re-populates an
+    # already-generated chunk, so those chunks keep bare, road-less terrain forever. This is
+    # how far out from the plot world's origin RigelMCMod re-checks for that on every enable,
+    # in chunks. Only chunks that ALREADY exist are touched (nothing is force-generated), and
+    # the pass is idempotent - an already-correct border is detected and left alone - so it
+    # safely self-heals a plot world created before this fix without a /wipeguildplots.
+    # User-reported: the symptom was a plot corner near origin with no walls at all. 0
+    # disables the check.
+    spawn-repair-radius-chunks: 12
+    # The blocks the road network is built from. Any solid block name works; an unrecognised
+    # name falls back to the default below and logs a warning rather than failing world
+    # creation. Changing these only affects chunks generated (or repaired) afterwards - run
+    # /wipeguildplots confirm to re-theme an existing plot world.
+    materials:
+      # The open, walkable road surface between two plots' borders.
+      road: STONE
+      # Fills every block from bedrock up through ground level under a border or crossing.
+      border-foundation: STONE_BRICKS
+      # Caps a straight, one-column-wide border. A wall/fence block is the right shape here.
+      border-wall: COBBLESTONE_WALL
+      # Caps the plot-gap x plot-gap square where four plot corners meet. Deliberately its
+      # own setting rather than reusing border-wall: a wall block is a thin fence post, so an
+      # entire square of them renders as a bumpy lattice instead of a clean crossing
+      # (user-reported). Use a full solid block here.
+      intersection: STONE_BRICKS
 
 # Vote-site streak/milestone rewards - see modules.vote above. Recorded via
 # "/vote record <player>", which you configure your vote-listener plugin to run on a
@@ -974,6 +1031,20 @@ world:
     send-on-join: "first_join"
     # Whether dying sends a player to spawn instead of their bed/respawn anchor.
     send-on-respawn: false
+  # User-requested: keep non-staff players out of the primary Overworld entirely - they
+  # join into, respawn into, and are bounced back to the flatlands sandbox instead. Only
+  # the Overworld is affected: the Nether/End (reachable via /world nether|end), the
+  # flatlands sandbox, the guild plot world, and the admin world are all untouched.
+  # Portals leading back to the Overworld are redirected to flatlands rather than
+  # cancelled, so nobody gets stuck standing in a portal.
+  #
+  # NOTE: with this on, set /setspawn somewhere inside the flatlands world - a spawn point
+  # in the Overworld would just get the player bounced straight back out again.
+  main-world-lockdown:
+    enabled: true
+    # Minimum rank still allowed in the main world. Staff need this to moderate it at all,
+    # and /wipeworld + /setspawn would be unusable there without it.
+    bypass-rank: moderator
 
 announce:
   broadcast:

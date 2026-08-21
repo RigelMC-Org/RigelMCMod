@@ -19,8 +19,8 @@ Feature-complete through Sub-phase F1 and running on a live, mixed Java/Bedrock/
 server. Implemented: the rank/title ladder with permission fallback; the ban system
 (`/ban`, `/tban`, `/permban` cascade, `/unban`, chat mute, audit log); tiered command
 access control; the anti-grief core (anti-nuke, anti-spam, freeze including hard-freeze,
-movement validator, command-spy/`/bookspy`); event- and packet-level crash-exploit guards
-(`protect/crash/`, TFM-parity "E1"/"E2" tiers); `WorldEditBridge`
+movement validator, command-spy/`/bookspy`, command blocks blocked outright); event- and
+packet-level crash-exploit guards (`protect/crash/`, TFM-parity "E1"/"E2" tiers); `WorldEditBridge`
 (FAWE/WorldEdit/naive-fallback) with `/protectarea`, `/cage`, and a CoreProtect rollback
 bridge; admin worlds with a guest system; the flatlands sandbox (CleanroomGenerator-backed
 for Eaglercraft/1.8-protocol compatibility, in-place wipe/autowipe by default with an
@@ -223,7 +223,13 @@ a configured message list (`announce.broadcast.messages`), and the server-list M
 rotate through configured entries too (`motd.entries`) - all three MiniMessage-colored. A
 genuinely brand-new player is never left standing at the primary world's own default
 spawn: if a Senior Admin has run `/setspawn`, they land there like normal; if not, they
-default into the flatlands sandbox instead of the main world.
+default into the flatlands sandbox instead of the main world. Beyond that, the primary
+Overworld is closed to non-staff entirely by default
+(`world.main-world-lockdown`) - players join into, respawn into, and are returned to the
+flatlands sandbox, while the Nether/End (via `/world`), the guild plot world, and the
+admin world stay reachable as normal. Staff at `bypass-rank` (default Moderator) are
+exempt so the main world remains moderatable. With this on, point `/setspawn` at a
+location inside flatlands.
 
 ## Building
 

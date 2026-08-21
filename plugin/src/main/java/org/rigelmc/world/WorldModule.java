@@ -82,6 +82,10 @@ public final class WorldModule implements PluginModule {
         plugin.getServer()
                 .getPluginManager()
                 .registerEvents(new SpawnJoinListener(plugin, spawnService, flatlandsService), plugin);
+        MainWorldLockdownGuard mainWorldLockdownGuard =
+                new MainWorldLockdownGuard(flatlandsService, permissionGate);
+        plugin.getServer().getPluginManager().registerEvents(mainWorldLockdownGuard, plugin);
+        mainWorldLockdownGuard.start(plugin);
     }
 
     @Override

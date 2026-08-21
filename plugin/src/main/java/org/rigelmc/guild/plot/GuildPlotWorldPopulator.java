@@ -30,9 +30,9 @@ import org.jetbrains.annotations.NotNull;
  * a real, user-reported bug: Bukkit generates a world's spawn-chunk region during {@code
  * WorldCreator#createWorld()} itself, so those chunks always predate this populator no
  * matter how early it's attached. {@code
- * GuildPlotWorldService#paintPreGeneratedSpawnChunks} runs {@link #paintChunk} over exactly
- * that set immediately after attaching, as a second pass - see its javadoc for the full
- * story and for why it's scoped to a freshly-created world only.</p>
+ * GuildPlotWorldService#repairPreGeneratedChunks} runs {@link #paintChunk} over exactly
+ * those chunks right after attaching, as a self-healing second pass - see its javadoc for
+ * the full story.</p>
  *
  * <p><b>Deliberately reads each column's real generated ground height at population time
  * ({@link LimitedRegion#getHighestBlockYAt}) rather than trusting {@code
@@ -57,26 +57,21 @@ import org.jetbrains.annotations.NotNull;
  */
 public final class GuildPlotWorldPopulator extends BlockPopulator {
 
-    /** Road surface, filling the gap between border rings. */
-    private static final Material ROAD_MATERIAL = Material.STONE;
-    /** The border's solid foundation, filling every block from bedrock up through ground level. */
-    private static final Material BORDER_FOUNDATION_MATERIAL = Material.STONE_BRICKS;
-    /** One block above the foundation - the actual visible wall separating plots from the road. */
-    private static final Material BORDER_WALL_MATERIAL = Material.COBBLESTONE_WALL;
-
     private final int plotSize;
     private final int plotGap;
+    private final PlotWorldMaterials materials;
 
-    public GuildPlotWorldPopulator(int plotSize, int plotGap) {
+    public GuildPlotWorldPopulator(int plotSize, int plotGap, @NotNull PlotWorldMaterials materials) {
         this.plotSize = plotSize;
         this.plotGap = plotGap;
+        this.materials = materials;
     }
 
     @Override
     public void populate(
             @NotNull WorldInfo worldInfo, @NotNull Random random, int chunkX, int chunkZ,
             @NotNull LimitedRegion limitedRegion) {
-        paintChunk(worldInfo, limitedRegion, chunkX, chunkZ, plotSize, plotGap);
+        paintChunk(worldInfo, limitedRegion, chunkX, chunkZ, plotSize, plotGap, materials);
     }
 
     /**
@@ -90,12 +85,19 @@ public final class GuildPlotWorldPopulator extends BlockPopulator {
      * WorldCreator#createWorld()}. Those chunks already exist by the time a populator can
      * possibly be attached, and Bukkit never re-populates an existing chunk (see this
      * class's own javadoc), so without that second pass they keep bare, road-less terrain
-     * forever - a real, user-reported bug that showed up as exactly one broken plot corner,
-     * the one nearest world origin, with every other corner in the world correct.</p>
+     * forever - a real, user-reported bug that showed up as broken plot corners around world
+     * origin while every other corner in the world was correct.</p>
+     *
+     * <p><b>Idempotent</b>, deliberately: running it twice over the same chunk changes
+     * nothing the second time. That is a load-bearing property, not a nicety - {@code
+     * GuildPlotWorldService#repairPreGeneratedChunks} re-runs this over already-generated
+     * chunks on every enable to self-heal a world that was created before the second pass
+     * existed, which is only safe because a painted column is detected and skipped rather
+     * than stacked on top of.</p>
      */
     public static void paintChunk(
             @NotNull WorldInfo worldInfo, @NotNull RegionAccessor region, int chunkX, int chunkZ,
-            int plotSize, int plotGap) {
+            int plotSize, int plotGap, @NotNull PlotWorldMaterials materials) {
         int baseX = chunkX << 4;
         int baseZ = chunkZ << 4;
         for (int dx = 0; dx < 16; dx++) {
@@ -110,20 +112,50 @@ public final class GuildPlotWorldPopulator extends BlockPopulator {
                 }
                 PlotWorldTerrain.CellType type = PlotWorldTerrain.classify(worldX, worldZ, plotSize, plotGap);
                 switch (type) {
-                    case ROAD -> region.setType(worldX, groundY, worldZ, ROAD_MATERIAL);
-                    case BORDER -> {
-                        // Solid all the way down to bedrock (user-requested), not just a
-                        // one-block footing under the wall - see class javadoc.
-                        for (int y = worldInfo.getMinHeight(); y <= groundY; y++) {
-                            region.setType(worldX, y, worldZ, BORDER_FOUNDATION_MATERIAL);
+                    case ROAD -> {
+                        if (region.getType(worldX, groundY, worldZ) != materials.road()) {
+                            region.setType(worldX, groundY, worldZ, materials.road());
                         }
-                        region.setType(worldX, groundY + 1, worldZ, BORDER_WALL_MATERIAL);
                     }
+                    // BORDER and INTERSECTION build identically apart from the block capping
+                    // them: a straight edge gets the wall block (a thin fence post, which is
+                    // what a one-column-wide border should look like), while an intersection
+                    // square gets a full solid cube. User-reported: capping the whole
+                    // plotGap x plotGap square with wall blocks rendered as a bumpy lattice
+                    // of disconnected posts rather than a clean crossing.
+                    case BORDER -> paintPillar(
+                            worldInfo, region, worldX, worldZ, groundY, materials, materials.borderWall());
+                    case INTERSECTION -> paintPillar(
+                            worldInfo, region, worldX, worldZ, groundY, materials, materials.intersection());
                     case PLOT -> {
                         // Leave the generator's own ground (grass, by default) untouched.
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Foundation from bedrock up through ground level, capped with {@code capMaterial} one
+     * block above it.
+     *
+     * <p>The already-capped check is what makes {@link #paintChunk} safely re-runnable over
+     * an existing world (see its javadoc): once a column is painted, its highest block IS the
+     * cap, so the {@code groundY} passed in is really the cap's own Y. Without this check a
+     * second pass would lay a fresh foundation up to there and place another cap one block
+     * higher, growing every border and crossing upward on every single run.</p>
+     */
+    private static void paintPillar(
+            @NotNull WorldInfo worldInfo, @NotNull RegionAccessor region, int worldX, int worldZ,
+            int groundY, @NotNull PlotWorldMaterials materials, @NotNull Material capMaterial) {
+        if (region.getType(worldX, groundY, worldZ) == capMaterial) {
+            return;
+        }
+        // Solid all the way down to bedrock (user-requested), not just a one-block footing
+        // under the cap - see class javadoc.
+        for (int y = worldInfo.getMinHeight(); y <= groundY; y++) {
+            region.setType(worldX, y, worldZ, materials.borderFoundation());
+        }
+        region.setType(worldX, groundY + 1, worldZ, capMaterial);
     }
 }

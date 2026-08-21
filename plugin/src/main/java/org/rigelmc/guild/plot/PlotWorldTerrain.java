@@ -44,8 +44,9 @@ import org.jetbrains.annotations.NotNull;
  * never-touching wall stubs around an open diamond of pavement. Once neither axis is inside
  * a plot's own footprint (both are somewhere in the gap simultaneously - i.e. this column is
  * inside the {@code plotGap x plotGap} intersection square, not on a straight edge), the
- * whole square is {@code BORDER}: every corner reads as a clean, fully-enclosed wall with no
- * gap. Straight roads between two adjacent plots are untouched by this - they still run the
+ * whole square is {@link CellType#INTERSECTION}: every corner reads as a clean, fully-enclosed
+ * solid crossing with no gap. It is a distinct cell type from {@code BORDER} only so it can be
+ * built from a solid block - see {@code CellType.INTERSECTION}'s own javadoc. Straight roads between two adjacent plots are untouched by this - they still run the
  * full open width right up to the intersection, then dead-end into this solid block rather
  * than passing through it (plots are reached via {@code /guild plot tp}, not on-foot travel
  * across the whole grid, so a non-passable intersection costs nothing functionally).</p>
@@ -56,7 +57,23 @@ public final class PlotWorldTerrain {
     }
 
     /** What a single world column should look like at ground level. */
-    public enum CellType { PLOT, BORDER, ROAD }
+    public enum CellType {
+        /** Inside a plot's own buildable footprint - left exactly as the generator made it. */
+        PLOT,
+        /** The one-block ring immediately outside a plot, along a straight edge - a wall. */
+        BORDER,
+        /** Open, paved road between two plots' border rings. */
+        ROAD,
+        /**
+         * Inside the {@code plotGap x plotGap} square where up to four plots' corners meet.
+         * Structurally the same "sealed, solid, impassable" role as {@link #BORDER}, but a
+         * distinct type purely so it can be built out of a <i>solid</i> block instead of the
+         * wall block: user-reported, filling this square with wall blocks rendered as a
+         * bumpy 7x7 lattice of individual fence posts rather than a clean crossing, because
+         * a wall block is a thin connecting post, not a full cube.
+         */
+        INTERSECTION
+    }
 
     /** Per-axis classification before the two axes are combined - see {@link #classify}. */
     private enum AxisZone { PLOT, EDGE, MIDDLE }
@@ -96,10 +113,10 @@ public final class PlotWorldTerrain {
         }
         // Neither axis is PLOT - this column is inside an intersection square, where up to 4
         // different plots' corners approach diagonally. See class javadoc: the whole square
-        // is BORDER, fully sealing every corner - previously only the single column closest
-        // to each plot was BORDER here, leaving the rest of the square as open road and four
+        // is sealed solid, so no corner has a gap - previously only the single column closest
+        // to each plot was walled here, leaving the rest of the square as open road and four
         // disconnected wall stubs that never touched each other.
-        return CellType.BORDER;
+        return CellType.INTERSECTION;
     }
 
     /** @return which zone {@code local} (already floor-mod'd into {@code [0, plotSize + plotGap)}) falls into on one axis. */
