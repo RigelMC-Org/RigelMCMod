@@ -71,6 +71,13 @@ public final class RigelEditExtentChain {
                 wrapped = new ContainerLimitExtent(wrapped, plugin, uuid, containerCap);
             }
 
+            if (plugin.rigelConfig().worldEditFragileBlocksEnabled()) {
+                wrapped = new FragileBlockExtent(
+                        wrapped, plugin, uuid,
+                        plugin.rigelConfig().worldEditFragileBanHighRisk(),
+                        plugin.rigelConfig().worldEditFragileMaxPerOperation());
+            }
+
             Set<String> blocked = normalizedBlockedTypes(plugin);
             if (!blocked.isEmpty()) {
                 wrapped = new BlockedTypeExtent(wrapped, plugin, uuid, blocked);

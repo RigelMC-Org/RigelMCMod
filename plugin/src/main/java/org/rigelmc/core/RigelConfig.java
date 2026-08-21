@@ -658,6 +658,39 @@ public final class RigelConfig {
     }
 
     /**
+     * @return {@code protect.worldedit.fragile-blocks.enabled} - user-requested: saplings,
+     *     carpets, torches, flowers, redstone and rails cannot support themselves, so they
+     *     pop off into dropped items en masse the moment their support changes. Same
+     *     lag-bomb class as the gravity blocks in {@link #worldEditBlockedBlockTypes()},
+     *     with {@code Item} entities instead of {@code FallingBlock} ones. See {@code
+     *     protect.worldedit.FragileBlockPolicy}.
+     */
+    public boolean worldEditFragileBlocksEnabled() {
+        return source.getBoolean("protect.worldedit.fragile-blocks.enabled", true);
+    }
+
+    /**
+     * @return {@code protect.worldedit.fragile-blocks.ban-high-risk} - whether the worst of
+     *     them (redstone wire/repeaters/comparators, all rails, all pressure plates,
+     *     tripwire) are refused outright rather than merely counted against the cap below.
+     *     Those additionally drive redstone tick churn or fire on entity contact, so even a
+     *     modest number is disproportionately expensive.
+     */
+    public boolean worldEditFragileBanHighRisk() {
+        return source.getBoolean("protect.worldedit.fragile-blocks.ban-high-risk", true);
+    }
+
+    /**
+     * @return {@code protect.worldedit.fragile-blocks.max-per-operation} - how many fragile
+     *     blocks a single non-staff edit may place before it is halted. A cap rather than a
+     *     ban is what keeps an ordinary schematic {@code //paste} working, since almost
+     *     every build contains a few torches or flowers.
+     */
+    public int worldEditFragileMaxPerOperation() {
+        return source.getInt("protect.worldedit.fragile-blocks.max-per-operation", 1000);
+    }
+
+    /**
      * @return {@code protect.worldedit.spawn-protection.enabled} - user-requested: much
      *     stricter WorldEdit caps specifically near the server's configured spawn point
      *     (see {@code world.SpawnService}), on top of the general limits above. Default

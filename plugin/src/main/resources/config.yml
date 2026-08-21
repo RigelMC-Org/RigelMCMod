@@ -680,6 +680,27 @@ protect:
       # Most container blocks (chests, hoppers, furnaces, ...) a single non-staff session
       # may place.
       max-containers: 500
+    # Fragile blocks - saplings, carpets, torches, flowers, redstone, rails and friends.
+    # User-requested, and the mirror image of blocked-block-types above: those are gravity
+    # blocks that become a mass FallingBlock spawn, these cannot support themselves and so
+    # pop off into dropped items all at once the moment whatever they sit on changes. A
+    # "//set torch" across a big region is a lag bomb primed on the floor underneath it.
+    # Detected from WorldEdit's own block registry (its isFragileWhenPushed flag plus
+    # Minecraft's block tags), NOT a hand-maintained list, so new blocks are covered
+    # automatically on a Minecraft update. Moderator+ bypass this, like every other
+    # WorldEdit limit on this page.
+    fragile-blocks:
+      enabled: true
+      # Refuse the worst of them outright instead of just counting them: redstone wire,
+      # repeaters, comparators, all rails, all pressure plates, tripwire. On top of dropping
+      # as items these drive redstone tick churn or fire on entity contact, so even a modest
+      # number is disproportionately expensive.
+      ban-high-risk: true
+      # How many of the rest a single non-staff edit may place before it's halted. A cap
+      # rather than a ban is deliberate - it keeps an ordinary schematic //paste working,
+      # since almost every build contains a few torches or flowers, while still stopping a
+      # mass fill. Lower this if fragile-block lag is still getting through.
+      max-per-operation: 1000
     # User-requested: much tighter WorldEdit caps near the server's configured spawn point
     # (see /setspawn) - stops "massive WorldEdit commands near spawn" specifically, on top
     # of the general radius-max/limits above. Moderator+ bypass this entirely, same as
