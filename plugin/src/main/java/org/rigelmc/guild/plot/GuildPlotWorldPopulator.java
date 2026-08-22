@@ -3,6 +3,10 @@ package org.rigelmc.guild.plot;
 import java.util.Random;
 import org.bukkit.Material;
 import org.bukkit.RegionAccessor;
+import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.type.Wall;
 import org.bukkit.generator.BlockPopulator;
 import org.bukkit.generator.LimitedRegion;
 import org.bukkit.generator.WorldInfo;
@@ -114,7 +118,7 @@ public final class GuildPlotWorldPopulator extends BlockPopulator {
                 switch (type) {
                     case ROAD -> {
                         if (region.getType(worldX, groundY, worldZ) != materials.road()) {
-                            region.setType(worldX, groundY, worldZ, materials.road());
+                            write(region, worldX, groundY, worldZ, materials.road());
                         }
                     }
                     // BORDER and INTERSECTION build identically apart from the block capping
@@ -149,13 +153,67 @@ public final class GuildPlotWorldPopulator extends BlockPopulator {
             @NotNull WorldInfo worldInfo, @NotNull RegionAccessor region, int worldX, int worldZ,
             int groundY, @NotNull PlotWorldMaterials materials, @NotNull Material capMaterial) {
         if (region.getType(worldX, groundY, worldZ) == capMaterial) {
+            matchGeneratorState(region, worldX, groundY, worldZ, capMaterial);
             return;
         }
         // Solid all the way down to bedrock (user-requested), not just a one-block footing
         // under the cap - see class javadoc.
         for (int y = worldInfo.getMinHeight(); y <= groundY; y++) {
-            region.setType(worldX, y, worldZ, materials.borderFoundation());
+            write(region, worldX, y, worldZ, materials.borderFoundation());
         }
-        region.setType(worldX, groundY + 1, worldZ, capMaterial);
+        write(region, worldX, groundY + 1, worldZ, capMaterial);
+    }
+
+    /**
+     * Writes one block in a way that produces the <b>same block state</b> whether this is the
+     * generator pass or the repair pass.
+     *
+     * <p>User-reported: repaired chunks near world origin grew visibly different walls from
+     * generated ones. Same blocks, same positions - different <i>state</i>. A populator's
+     * {@link LimitedRegion} writes never trigger neighbour updates, so a cobblestone wall
+     * keeps its default "post" state and a run of them renders as separate crenellations.
+     * {@code RegionAccessor#setType} on a live {@link World} applies physics, which connects
+     * each wall to its neighbours and collapses that run into one low continuous wall. Both
+     * are valid walls; they just do not match, and the boundary of the repair radius was
+     * plainly visible as the point where one style became the other.
+     *
+     * <p>Writing through {@link Block#setType(Material, boolean)} with physics disabled makes
+     * the live-world path produce byte-identical states to the generator, which is the whole
+     * requirement here.</p>
+     */
+    private static void write(
+            @NotNull RegionAccessor region, int x, int y, int z, @NotNull Material material) {
+        if (region instanceof World world) {
+            world.getBlockAt(x, y, z).setType(material, false);
+            return;
+        }
+        region.setType(x, y, z, material);
+    }
+
+    /**
+     * Self-heals a cap block that an <i>earlier</i> repair pass already connected up via
+     * physics, so an existing plot world converges on the generator's look without needing a
+     * {@code /wipeguildplots confirm}.
+     *
+     * <p>Only ever touches a wall that is actually connected to something (the generator
+     * never produces one), and only on the live-world path - so on the generator pass, and on
+     * every already-correct column, this is a single block-data read and nothing else.</p>
+     */
+    private static void matchGeneratorState(
+            @NotNull RegionAccessor region, int x, int y, int z, @NotNull Material capMaterial) {
+        if (!(region instanceof World world)) {
+            return;
+        }
+        Block block = world.getBlockAt(x, y, z);
+        if (block.getBlockData() instanceof Wall wall && isConnected(wall)) {
+            block.setType(capMaterial, false); // back to the generator's default post state
+        }
+    }
+
+    private static boolean isConnected(@NotNull Wall wall) {
+        return wall.getHeight(BlockFace.NORTH) != Wall.Height.NONE
+                || wall.getHeight(BlockFace.SOUTH) != Wall.Height.NONE
+                || wall.getHeight(BlockFace.EAST) != Wall.Height.NONE
+                || wall.getHeight(BlockFace.WEST) != Wall.Height.NONE;
     }
 }
